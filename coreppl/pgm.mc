@@ -5,15 +5,19 @@ include "name.mc"
 type Env = Map Name Expr
 let _emptyEnv = mapEmpty nameCmp
 
-lang PlateAst
+lang Plate = Ast + PrettyPrint + Eq + Sym
   syn Expr =
   | TmPlate { fun:Expr
             , lst:Expr
             , ty:Type
             , info:Info
             }
+
   sem infoTm =
   | TmPlate t -> t.info
+
+  sem ty =
+  | TmPlate t -> t.ty
 
   sem withType (ty : Type) =
   | TmPlate t -> TmPlate {t with ty=ty}
@@ -23,9 +27,8 @@ lang PlateAst
 
   sem sfold_Expr_Expr (f: a -> b -> a) (acc : a) =
   | TmPlate t -> f (f acc t.fun) t.lst
-end
 
-lang PlatePrettyPrint = PlateAst + PrettyPrint
+  -- Pretty printing
   sem isAtomic =
   | TmPlate _ -> false
 
@@ -36,9 +39,24 @@ lang PlatePrettyPrint = PlateAst + PrettyPrint
         (env, join ["plate ", fun, lst])
       else never
     else never
+
+  -- Equality
+  sem eqExprH (env : EqEnv) (free : EqEnv) (lhs : Expr) =
+  | TmPlate r -> match lhs with TmPlate l then
+                   match eqExprH env free l.fun r.fun with Some free then
+                     eqExprH env free l.lst r.lst
+                   else None ()
+                 else None ()
+
+  -- Symbolize
+  sem symbolizeExpr (env : SymEnv) =
+  | TmPlate t ->
+    TmPlate {{{ t with fun = symbolizeExpr env t.fun }
+                  with lst = symbolizeExpr env t.lst }
+                  with ty = symbolizeType env t.ty }
 end
 
-lang ProbabilisticGraphicalModel = CorePPL + MExprAst + PlatePrettyPrint
+lang ProbabilisticGraphicalModel = CorePPL + MExprAst + Plate
   -- Some if error otherwise None
   -- Only lets ending with
   -- 1. TmAssume t with valid t.dist
@@ -108,7 +126,7 @@ lang ProbabilisticGraphicalModel = CorePPL + MExprAst + PlatePrettyPrint
 
 end
 
-let plate_ = use PlateAst in
+let plate_ = use Plate in
   lam f. lam lst. TmPlate {fun=f, lst=lst, ty=tyunknown_, info=NoInfo()}
 
 lang TestLang = ProbabilisticGraphicalModel
