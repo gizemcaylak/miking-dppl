@@ -2,7 +2,7 @@ include "string.mc"
 mexpr
 let vocabsize:Int = 3 in
 let numdocs:Int = 3 in
-let numWordsPerDoc:Int = 100 in
+let numWordsPerDoc:Int = 3 in
 let numtopics:Int = 2 in
 let a:Float = 1.0 in
 let b:Float = 1.0 in
