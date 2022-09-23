@@ -1,20 +1,18 @@
 include "string.mc"
 mexpr
-let vocabsize:Int = 3 in
+let vocabsize:Int = 2 in
 let numdocs:Int = 3 in
-let numWordsPerDoc:Int = 3 in
+let numWordsPerDoc:Int = 10 in
 let numtopics:Int = 2 in
 let a:Float = 1.0 in
 let b:Float = 1.0 in
-let beta:[Float] = make vocabsize b in
-let phi1 = [0.1,0.5,0.3] in
-let phi2 =  [0.5,0.1,0.3] in
+let phi1 = [0.99,0.01] in
+let phi2 =  [0.01,0.99] in
 let phi = [phi1,phi2] in
-let theta1 = [0.8, 0.2] in
-let theta2 = [0.2, 0.8] in
+let theta1 = [0.95, 0.05] in
+let theta2 = [0.05, 0.95] in
 let theta3 = [0.5, 0.5] in
 let theta = [theta1, theta2, theta3] in
-
 let docWords = map (lam docid.
 let words = map (lam.
 let z = assume (Categorical (get theta docid)) in
