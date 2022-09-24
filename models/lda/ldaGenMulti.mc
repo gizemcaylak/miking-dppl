@@ -1,16 +1,18 @@
 include "string.mc"
 include "map.mc"
 mexpr
-let vocabsize:Int = 30 in
+let vocabsize:Int = 100 in
 let numdocs:Int = 25 in
-let numWordsPerDoc:Int = 10 in
+let numWordsPerDoc:Int = 20 in
 let numtopics:Int = 10 in
+
 let a:Float = 0.1 in
-let b:Float = 0.1 in
+let b:Float = 0.2 in
 let alpha:[Float] = make numtopics a in
 let beta:[Float] = make vocabsize b in
-let phi = map (lam. assume (Dirichlet beta)) (range 0 numtopics 1) in
-let theta = map (lam. assume (Dirichlet alpha)) (range 0 numdocs 1) in
+let phi = create numtopics (lam. assume (Dirichlet beta)) in
+let theta = create numdocs (lam. assume (Dirichlet alpha)) in
+
 /-
 let phi1 = [0.99,0.01] in
 let phi2 =  [0.01,0.99] in
@@ -20,7 +22,9 @@ let theta3 = [0.5, 0.5] in
 let phi = [phi1,phi2] in
 let theta = [theta1, theta2, theta3] in
 -/
-let docWords = map (lam docid.
+let a:Float = 1. in
+let b:Float = 1. in
+let docWords = create numdocs (lam docid.
   foldl (lam m. lam .
     let z = assume (Categorical (get theta docid)) in
     let w = assume (Categorical (get phi z)) in
@@ -28,18 +32,17 @@ let docWords = map (lam docid.
       mapInsert w (addi 1 val.0, val.1) m
     else
       mapInsert w (1, docid) m
-  ) (mapEmpty subi) (range 0 numWordsPerDoc 1))
-(range 0 numdocs 1) in
+  ) (mapEmpty subi) (create numWordsPerDoc (lam x. x))) in
 let bagOfWords = map mapBindings docWords in
-let mcprogram = join ["include \"string.mc\"\ninclude \"seq.mc\"\nmexpr\n",
+let mcprogram = join ["include \"string.mc\"\ninclude \"seq.mc\"\ninclude \"ext/dist-ext.mc\"\nmexpr\n",
                       "-- let thetas = [",
-                      foldl (lam acc. lam t. join [acc,"--[", 
+                      foldl (lam acc. lam t. join [acc,"--[",
                         (foldl (lam s. lam e. join [s,
                                                   float2string e,","]) "" t),
                                                   "]\n"]) "\n" theta,
                       "--]\n",
                       "-- let phis = [",
-                      foldl (lam acc. lam t. join [acc,"--[", 
+                      foldl (lam acc. lam t. join [acc,"--[",
                         (foldl (lam s. lam e. join [s,
                                                   float2string e,","]) "" t),
                                                   "]\n"]) "\n" phi,
@@ -52,9 +55,8 @@ let mcprogram = join ["include \"string.mc\"\ninclude \"seq.mc\"\nmexpr\n",
                       "let beta:[Float] = [",
                       foldl (lam acc. lam . concat (concat acc (float2string b)) ",") "" (range 1 vocabsize 1),                      float2string b, "] in
 ",
-                      "let phi = map (lam. assume (Dirichlet beta)) (range 0 numtopics 1) in\n",
-                      "let theta = map (lam. assume (Dirichlet alpha)) (range 0 numdocs 1) in\n",
-                      "let oneHotEncoding = lam size. lam ind. lam count.\nmapi (lam i. lam e. if eqi i ind then count else 0) (range 0 size 1) in\n",
+                      "let phi = create numtopics (lam. assume (Dirichlet beta)) in\n",
+                      "let theta = create numdocs (lam. assume (Dirichlet alpha)) in\n",
                       "let docs:[(Int,Int)] = [",
                       foldl (lam acc. lam doc. (foldl (lam s. lam binding. join [s, "(", int2string (binding.0), ",", int2string (binding.1).0, "),"] ) acc doc )) "" (init bagOfWords),
                       foldl (lam s. lam binding. join [s,"(", int2string (binding.0), ",", int2string (binding.1).0, "),"] ) "" (init (last bagOfWords)),
@@ -63,11 +65,11 @@ let mcprogram = join ["include \"string.mc\"\ninclude \"seq.mc\"\nmexpr\n",
                       foldl (lam acc. lam doc. (foldl (lam s. lam binding. join [s, int2string (binding.1).1, ","] ) acc doc )) "" (init bagOfWords),
                       foldl (lam s. lam binding. join [s,int2string (binding.1).1, ","] ) "" (init (last bagOfWords)),
                       let w = last (last bagOfWords) in join [int2string (w.1).1, "] in\n"],
-                       "let z = map (lam w.\n",
+                       "let zCounts = create (length docs) (lam w.\n",
                        "\tlet word = get docs w in\n",
-                       "\tlet z = assume (Multinomial word.1 (get theta (get docids w))) in\n",
-                       "\titeri (lam z. lam e. observe (oneHotEncoding vocabsize word.0 e) (Multinomial e (get phi z))) z;\n z)",
-                       "(range 0 (length docs) 1) in \n",
+                       "\tlet counts = assume (Multinomial word.1 (get theta (get docids w))) in\n",
+                       "\titeri (lam z. lam e. weight (mulf (int2float e) (bernoulliLogPmf (get (get phi z) word.0) true))) counts;",
+                       " counts) in \n",
                        "let str = foldl (lam acc. lam e. join [acc,float2string e,\" \"]) \"\" (get theta 0) in\n
                        let str = foldl (lam acc. lam e. join [acc,float2string e,\" \"]) str (get theta 1) in\n
                        let str = foldl (lam acc. lam e. join [acc,float2string e,\" \"]) str (get theta 2) in\n
