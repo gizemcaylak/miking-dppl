@@ -37,7 +37,7 @@ install: build/${cppl_name}
 	mkdir -p $(bin_path) $(src_path);
 	cp build/${cppl_name} ${bin_path}/${exec_name}
 	chmod +x ${bin_path}/${exec_name}
-	cp -rfT $(cppl_src) $(src_path)
+	cp -rf $(cppl_src) $(src_path)
 
 # Scripts
 	cp -f scripts/${plot_name} ${bin_path}/.
@@ -46,7 +46,7 @@ install: build/${cppl_name}
 # RootPPL
 	mkdir -p $(dir $(rootppl_bin_path)) $(rootppl_src_path);
 	cp -f $(rootppl_bin) $(rootppl_bin_path)
-	cp -rfT $(rootppl_src) $(rootppl_src_path)
+	cp -rf $(rootppl_src) $(rootppl_src_path)
 
 uninstall:
 # CorePPL

@@ -7,10 +7,11 @@
 include "option.mc"
 include "string.mc"
 include "parser.mc"
-include "transformation.mc"
 include "dppl-arg.mc"
 include "inference.mc"
 include "common.mc"
+include "static-analyzer/static-analyzer.mc"
+include "static-analyzer/add-externals.mc"
 
 mexpr
 
@@ -30,7 +31,7 @@ match result with ParseOK r then
     -- Transform the model, if the flag is selected
     let ast =
       if options.transform then
-        transform ast
+        transformProgExt ast
       else ast in
 
     -- Optionally print the model
