@@ -1,20 +1,22 @@
 include "mexpr/ast-builder.mc"
 include "mexpr/externals.mc"
-include "mexpr/boot-parser.mc"
 include "mexpr/type.mc"
 include "sys.mc"
 
 include "../coreppl.mc"
 include "../inference-common/smc.mc"
-include "../src-location.mc"
 include "../parser.mc"
 include "../dppl-arg.mc"
 
+include "./common.mc"
+
 -- Inference methods
+include "apf/compile.mc"
+include "bpf/compile.mc"
 include "importance/compile.mc"
 include "mcmc-naive/compile.mc"
 include "mcmc-trace/compile.mc"
-include "mcmc-aligned/compile.mc"
+include "mcmc-lightweight/compile.mc"
 include "smc/compile.mc"
 
 
@@ -46,10 +48,12 @@ let mexprCompile: Options -> Expr -> Expr =
     -- Load runtime and compile function
     let compiler: (String, Expr -> Expr) =
       switch options.method
+        case "mexpr-apf" then compilerAPF options
+        case "mexpr-bpf" then compilerBPF options
         case "mexpr-importance" then compilerImportance options
         case "mexpr-mcmc-naive" then compilerNaiveMCMC options
         case "mexpr-mcmc-trace" then compilerTraceMCMC options
-        case "mexpr-mcmc-aligned" then compilerAlignedMCMC options
+        case "mexpr-mcmc-lightweight" then compilerLightweightMCMC options
         case "mexpr-smc" then compilerSMC options
         case _ then error (
           join [ "Unknown CorePPL to MExpr inference method:", options.method ]
@@ -58,13 +62,6 @@ let mexprCompile: Options -> Expr -> Expr =
     in
 
     match compiler with (runtime, compile) in
-
-    let parse = use BootParser in parseMCoreFile {
-      defaultBootParserParseMCoreFileArg with
-        eliminateDeadCode = false,
-        allowFree = true
-      }
-    in
 
     -- Type check model. NOTE(dlunde,2022-06-09): We do not want the
     -- annotations added by the type checker, as this may make the printed
@@ -85,7 +82,7 @@ let mexprCompile: Options -> Expr -> Expr =
     let prog = compile prog in
 
     -- Parse runtime
-    let runtime = parse (join [corepplSrcLoc, "/coreppl-to-mexpr/", runtime]) in
+    let runtime = parseRuntime runtime in
 
     -- Get external definitions from runtime-AST (input to next step)
     let externals = getExternalIds runtime in
@@ -105,8 +102,9 @@ let mexprCompile: Options -> Expr -> Expr =
       ("cps", str_ options.cps),
       ("printSamples", bool_ options.printSamples),
       ("earlyStop", bool_ options.earlyStop),
-      ("mcmcAlignedGlobalProb", float_ options.mcmcAlignedGlobalProb),
-      ("mcmcAlignedGlobalModProb", float_ options.mcmcAlignedGlobalModProb)
+      ("mcmcLightweightGlobalProb", float_ options.mcmcLightweightGlobalProb),
+      ("mcmcLightweightGlobalModProb", float_ options.mcmcLightweightGlobalModProb),
+      ("printAcceptanceRate", bool_ options.printAcceptanceRate)
     ]) in
 
     -- Printing function for return type
@@ -146,13 +144,23 @@ x
 " in
 
 -- Simple tests that ensure compilation throws no errors
-utest mexprCompile {default with method = "mexpr-importance" } simple
+utest mexprCompile {default with method = "mexpr-apf"} simple
+with () using lam. lam. true in
+utest mexprCompile {default with method = "mexpr-bpf"} simple
+with () using lam. lam. true in
+utest mexprCompile {default with method = "mexpr-importance", cps = "none" } simple
+with () using lam. lam. true in
+utest mexprCompile {default with method = "mexpr-importance", cps = "partial" } simple
+with () using lam. lam. true in
+utest mexprCompile {default with method = "mexpr-importance", cps = "full" } simple
 with () using lam. lam. true in
 utest mexprCompile {default with method = "mexpr-mcmc-naive" } simple
 with () using lam. lam. true in
 utest mexprCompile {default with method = "mexpr-mcmc-trace" } simple
 with () using lam. lam. true in
-utest mexprCompile {default with method = "mexpr-mcmc-aligned" } simple
+utest mexprCompile {default with method = "mexpr-mcmc-lightweight" } simple
+with () using lam. lam. true in
+utest mexprCompile {default with method = "mexpr-mcmc-lightweight", align = true } simple
 with () using lam. lam. true in
 utest mexprCompile {default with method = "mexpr-smc" } simple
 with () using lam. lam. true in
