@@ -12,16 +12,25 @@ lang PBN
                     val:Option Expr,
                     color:Int, -- 0:blue (assume), 1:red (stable)
                     dist:Expr,
-                    list:Bool}
+                    list:Bool,  --if it belongs to a list
+                    plate:Bool} --if it belongs to a plate
   | CodeBlockNode {ident:Name,
                     code:Expr,
                     ret:Bool,
-                    list:Bool}
+                    list:Bool, --if it belongs to a list
+                    plate:Bool} --if it belongs to a plate
   | ListNode {ident:Name,
               items:[Name],
-              dist:Option Expr}
+              dist:Option Expr,
+              plate:Bool}  --if it belongs to a plate
   | MultiplexerNode {ident:Name,
-                      index:Expr}
+                      index:Expr,
+                      plate:Bool} --if it belongs to a plate
+  | PlateNode {ident:Name,
+               lamVar:Name, -- new variable introduced
+               iter:Name, -- name of the observations to iterate over
+               vertices:Set Name, -- name set of vertices a plate contains
+               plate:Bool} --if it belongs to a plate
 
   sem cmprVertex (v1:Vertex) =
   | RandomVarNode v2 -> match v1 with RandomVarNode t then
@@ -32,8 +41,9 @@ lang PBN
                           nameCmp t.ident v2.ident
                         else match v1 with MultiplexerNode t then
                           nameCmp t.ident v2.ident
+                        else match v1 with PlateNode t then
+                          nameCmp t.ident v2.ident
                         else negi 1
-
   | CodeBlockNode v2 -> match v1 with CodeBlockNode t then
                           nameCmp t.ident v2.ident
                         else match v1 with RandomVarNode t then
@@ -42,8 +52,9 @@ lang PBN
                           nameCmp t.ident v2.ident
                         else match v1 with MultiplexerNode t then
                           nameCmp t.ident v2.ident
+                        else match v1 with PlateNode t then
+                          nameCmp t.ident v2.ident
                         else negi 1
-
   | ListNode v2 -> match v1 with ListNode t then
                     nameCmp t.ident v2.ident
                    else match v1 with CodeBlockNode t then
@@ -52,8 +63,9 @@ lang PBN
                      nameCmp t.ident v2.ident
                    else match v1 with MultiplexerNode t then
                      nameCmp t.ident v2.ident
+                   else match v1 with PlateNode t then
+                     nameCmp t.ident v2.ident
                    else negi 1
-
   | MultiplexerNode v2 -> match v1 with MultiplexerNode t then
                             nameCmp t.ident v2.ident
                           else match v1 with ListNode t then
@@ -61,6 +73,19 @@ lang PBN
                           else match v1 with CodeBlockNode t then
                             nameCmp t.ident v2.ident
                           else match v1 with RandomVarNode t then
+                            nameCmp t.ident v2.ident
+                          else match v1 with PlateNode t then
+                            nameCmp t.ident v2.ident
+                          else negi 1
+  | PlateNode v2 -> match v1 with PlateNode t then
+                            nameCmp t.ident v2.ident
+                          else match v1 with ListNode t then
+                            nameCmp t.ident v2.ident
+                          else match v1 with CodeBlockNode t then
+                            nameCmp t.ident v2.ident
+                          else match v1 with RandomVarNode t then
+                            nameCmp t.ident v2.ident
+                          else match v1 with MultiplexerNode t then
                             nameCmp t.ident v2.ident
                           else negi 1
 
@@ -74,6 +99,11 @@ lang PBN
   | CodeBlockNode v -> v.ident
   | MultiplexerNode v -> v.ident
   | ListNode v -> v.ident
+  | PlateNode v -> v.ident
+
+  sem getDist =
+  | RandomVarNode v -> Some (v.dist)
+  | _ -> None ()
 
   -- given a multiplexer m and a graph g, returns the list node that is an input to m
   sem inputMultiplexer (g:Digraph Vertex Label) =
@@ -107,7 +137,11 @@ use MExprPPL in
       foldl (lam acc. lam v. join [acc, " ", v.0 ,":",(int2string (sym2hash v.1)),"\t"]) "" l.items]
   else match v with MultiplexerNode m then
     let id = m.ident in join ["muxnode ", id.0 , " ",(int2string (sym2hash id.1)), mexprToString m.index]
-    else never
+  else match v with PlateNode p then
+    let id = p.ident in join ["platenode", id.0, " ",(int2string (sym2hash id.1)),
+      foldl (lam acc. lam v. join [acc, "",v.0,":" ,(int2string (sym2hash v.1)),"\t"]) "" (setToSeq p.vertices)]
+  else
+    never
 end
 
 lang ConjugatePrior = CorePPL + MExprAst + MExprPPL + PBN
@@ -153,9 +187,8 @@ lang ConjugatePrior = CorePPL + MExprAst + MExprPPL + PBN
       else (utuple_ [postAlpha,postBeta]) in
     let tName = nameSym "paramR" in
     let letT = nulet_ tName code in
-    let rho = CodeBlockNode {ident=tName, code=letT, ret=false,list=false} in
+    let rho = CodeBlockNode {ident=tName, code=letT, ret=false,list=false,plate=false} in
     (rho, TmDist {t2 with dist=DBeta {{d2 with a=tupleproj_ 0 (nvar_ tName)} with b= tupleproj_ 1 (nvar_ tName)}})
-
   | (TmDist ({dist=DGaussian d1}&t1),TmDist ({dist=DGaussian d2}&t2) ) ->
     let val = match obs with Some val then val else never in
     let s02 = (mulf_ d2.sigma d2.sigma) in
@@ -171,9 +204,8 @@ lang ConjugatePrior = CorePPL + MExprAst + MExprPPL + PBN
       else (utuple_ [postMu, postSigma]) in
     let tName = nameSym "paramR" in
     let letT = nulet_ tName code in
-    let rho = CodeBlockNode {ident=tName, code=letT, ret=false,list=false} in
+    let rho = CodeBlockNode {ident=tName, code=letT, ret=false,list=false,plate=false} in
     (rho, TmDist {t2 with dist=DGaussian {{d2 with mu= tupleproj_ 0 (nvar_ tName)} with sigma= tupleproj_ 1 (nvar_ tName)}})
-
   | (TmDist ({dist=DCategorical d1}&t1),TmDist ({dist=DDirichlet d2}&t2)) ->
     let val = match obs with Some val then val else never in
     let postA = mapi_ ( ulam_ "i" (ulam_ "e" (if_ (eqi_ (var_ "i") val) (addf_ (var_ "e") (float_ 1.0)) (var_ "e")))) d2.a in
@@ -183,9 +215,8 @@ lang ConjugatePrior = CorePPL + MExprAst + MExprPPL + PBN
       else postA in
     let tName = nameSym "paramR" in
     let letT = nulet_ tName code in
-    let rho = CodeBlockNode {ident=tName, code=letT, ret=false,list=false} in
+    let rho = CodeBlockNode {ident=tName, code=letT, ret=false,list=false,plate=false} in
     (rho, TmDist {t2 with dist=DDirichlet {d2 with a=nvar_ tName}})
-
   | _ -> error "posterior:not supported"
 
   -- input (d1: likelihood, d2: prior)
@@ -197,8 +228,8 @@ lang ConjugatePrior = CorePPL + MExprAst + MExprPPL + PBN
     let postP = divf_ postAlpha (addf_ postAlpha postBeta) in
     let tName = nameSym "param" in
     let letT = nulet_ tName postP in
-    let rho = CodeBlockNode {ident=tName, code=letT, ret=false,list=false} in
-    (rho,TmDist {t1 with dist=DBernoulli {d1 with p= nvar_ tName}},CodeBlockNode {ident=nameSym "", code=postP, ret=false,list=true})
+    let rho = CodeBlockNode {ident=tName, code=letT, ret=false,list=false,plate=false} in
+    (rho,TmDist {t1 with dist=DBernoulli {d1 with p= nvar_ tName}},CodeBlockNode {ident=nameSym "", code=postP, ret=false,list=true,plate=false})
 
   | (TmDist ({dist=DGaussian d1}&t1),TmDist ({dist=DGaussian d2}&t2) ) ->
     let s02 = (mulf_ d2.sigma d2.sigma) in
@@ -207,16 +238,16 @@ lang ConjugatePrior = CorePPL + MExprAst + MExprPPL + PBN
     let postSigma = appf1_ (var_ "externalSqrt") (addf_ s02 s2) in
     let tName = nameSym "param" in
     let letT = nulet_ tName (utuple_ [postMu, postSigma]) in
-    let rho = CodeBlockNode {ident=tName, code=letT, ret=false,list=false} in
-    (rho, TmDist {t1 with dist=DGaussian {{d1 with mu= tupleproj_ 0 (nvar_ tName)} with sigma= tupleproj_ 1 (nvar_ tName)}},CodeBlockNode {ident=nameSym "", code=(utuple_ [postMu, postSigma]) ,ret=false,list=true})
+    let rho = CodeBlockNode {ident=tName, code=letT, ret=false,list=false,plate=false} in
+    (rho, TmDist {t1 with dist=DGaussian {{d1 with mu= tupleproj_ 0 (nvar_ tName)} with sigma= tupleproj_ 1 (nvar_ tName)}},CodeBlockNode {ident=nameSym "", code=(utuple_ [postMu, postSigma]) ,ret=false,list=true,plate=false})
 
   | (TmDist ({dist=DCategorical d1}&t1),TmDist ({dist=DDirichlet d2}&t2)) ->
     let sumai = foldl_ (ulam_ "acc" (ulam_ "i" (addf_ (var_ "acc") (var_ "i")))) (float_ 0.0) (d2.a) in
     let postA = map_ (ulam_ "ai" (divf_ (var_ "ai") sumai)) d2.a in
     let tName = nameSym "param" in
     let letT = nulet_ tName postA in
-    let rho = CodeBlockNode {ident=tName, code=letT, ret=false,list=false} in
-    (rho, TmDist {t1 with dist=DCategorical {d1 with p=nvar_ tName}},CodeBlockNode {ident=nameSym "", code=postA,ret=false,list=true})
+    let rho = CodeBlockNode {ident=tName, code=letT, ret=false,list=false,plate=false} in
+    (rho, TmDist {t1 with dist=DCategorical {d1 with p=nvar_ tName}},CodeBlockNode {ident=nameSym "", code=postA,ret=false,list=true,plate=false})
   | _ -> error "posteriorPredictive:not supported"
 
   sem listParam (cbId:Name)=
@@ -244,221 +275,227 @@ lang StaticAnalyzer = PBN + MExprAst + MExprPPL + ConjugatePrior
   | TmVar t ->
   -- find the corresponding vertex ident from the variable ident
   match mapLookup t.ident m2 with Some vertexId then
-    let vFrom = mapLookupOrElse (lam. error "Lookup failed") vertexId m1 in
+    let vFrom = mapLookupOrElse (lam. error "createEdges:Lookup failed") vertexId m1 in
     -- create an edge to the source vertex from the vertex that it depends on
     if digraphEqv g vFrom v then edges --check if they are in the same codeblock if so no need to create an edge
     else setInsert (vFrom, v, 0) edges
   else edges -- if cannot find id then it must be created with lambda scoping so ignore
   | t -> sfold_Expr_Expr (createEdges v g m1 m2) edges t
 
-  --
   sem findRandomVariables (m:Map Name Vertex) (idents:Set Name) =
   | TmVar t -> match mapLookup t.ident m with Some (RandomVarNode _) then setInsert t.ident idents else idents
   | t -> sfold_Expr_Expr (findRandomVariables m) idents t
 
-  --
-  sem findTargets (m:Map Name Vertex) (targets:Set Name) =
-  | TmVar t -> targets -- if the random variable directly used
-  | t-> findRandomVariables m targets t
+  sem plateCheck (id:Name) =
+  | Some p -> (Some (setInsert id p),true)
+  | _ -> (None (),false)
 
-  sem createVertex (ident:Option Name) (g:Digraph Vertex Label) (m1:Map Name Vertex) (m2:Map Name Name) (env:Map Name Expr) =
-  | TmAssume t -> let id = match ident with Some id then id else nameSym "" in
-                  let v = RandomVarNode {ident=id,val = None(),color=0,dist= t.dist,list=true} in
-                  let g = digraphAddVertex v g in
-                  let edges = setToSeq (createEdges v g m1 m2 (setEmpty cmprEdge) (TmAssume t)) in
-                  let g = digraphAddEdges edges g in
-                  ((g, mapInsert id v m1, mapInsert id id m2, mapInsert id (TmAssume t) env),v)
-  | TmObserve t -> let id = match ident with Some id then id else nameSym "" in
-                  let v = RandomVarNode {ident=id,val =  Some (t.value),color=0,dist= t.dist,list=true} in
-                  let g = digraphAddVertex v g in
-                  let edges = setToSeq (createEdges v g m1 m2 (setEmpty cmprEdge) (TmObserve t)) in
-                  let g = digraphAddEdges edges g in
-                  ((g, mapInsert id v m1, mapInsert id id m2, mapInsert id (TmObserve t) env),v)
-  | TmSeq t -> let id = match ident with Some id then id else nameSym "" in
-               let res = mapAccumL (lam acc. lam e. createVertex (None ()) acc.0 acc.1 acc.2 acc.3 e) (g,m1,m2,env) t.tms in
-               let ids = map getId res.1 in
-               let dist = validList (None ()) res.1 in
-               let v = ListNode {ident=id, items=ids,dist=dist} in
-               let acc = res.0 in
-               let g = acc.0 in
-               let m1 = acc.1 in
-               let m2 = acc.2 in
-               let env = acc.3 in
-               let g = digraphAddVertex v g in
-               let edges = setToSeq (createEdges v g m1 m2 (setEmpty cmprEdge) (TmSeq t)) in
-               let g = digraphAddEdges edges g in
-               ((g, mapInsert id v m1, mapInsert id id m2, mapInsert id (TmSeq t) env),v)
-  | t -> let id = match ident with Some id then id else nameSym "" in
-         let v = CodeBlockNode {ident=id, code=t,ret=false,list=true} in
-         let g = digraphAddVertex v g in
-         let edges = setToSeq (createEdges v g m1 m2 (setEmpty cmprEdge) t) in
-         let g = digraphAddEdges edges g in
-         ((g, mapInsert id v m1, mapInsert id id m2, mapInsert id t env),v)
-
-
-  -- m1: a mapping from a vertex ident to a corresponding vertex
+  -- m1: a mapping from a vertex ident to a corresponding vertex 
   -- m2: a mapping from a variable name to its corresponding vertex id. Several let bindings can corresspond to a single code block vertex
-  sem createPBN (g:Digraph Vertex Label) (targets:Set Name) (m1:Map Name Vertex) (m2:Map Name Name) (env:Map Name Expr) (blockIdent:Option Name) =
-    | TmLet ({body=TmAssume ({dist=TmDist d}&a)}&t) ->
-    let v = RandomVarNode {ident = t.ident, val = None (), color = 0, dist = a.dist,list=false} in
+  sem createPBN (g:Digraph Vertex Label) (targets:Set Name) (m1:Map Name Vertex) (m2:Map Name Name) (env:Map Name Expr) (blockIdent:Option Name) (plateVertices:Option (Set Name)) =
+  | TmLet t -> let res = createPBN2 g targets m1 m2 env blockIdent plateVertices (Some t.ident) false false t.body in
+                createPBN res.0 res.1 res.2 res.3 res.4 res.5 res.6 t.inexpr
+  | TmRecLets t -> let res = createPBN2 g targets m1 m2 env blockIdent plateVertices (None ()) false false (TmRecLets t) in
+                createPBN res.0 res.1 res.2 res.3 res.4 res.5 res.6 t.inexpr
+  | TmExt t -> let res = createPBN2 g targets m1 m2 env blockIdent plateVertices (None ()) false false (TmExt t) in
+                createPBN res.0 res.1 res.2 res.3 res.4 res.5 res.6 t.inexpr
+  | TmType t -> let res = createPBN2 g targets m1 m2 env blockIdent plateVertices (None ()) false false (TmType t) in
+                createPBN res.0 res.1 res.2 res.3 res.4 res.5 res.6 t.inexpr
+  | TmConDef t -> let res = createPBN2 g targets m1 m2 env blockIdent plateVertices (None ()) false false (TmConDef t) in
+                createPBN res.0 res.1 res.2 res.3 res.4 res.5 res.6 t.inexpr
+  | t -> createPBN2 g targets m1 m2 env blockIdent plateVertices (None()) false true t
+
+-- list:if items in a list create nodes
+sem createPBN2 (g:Digraph Vertex Label) (targets:Set Name) (m1:Map Name Vertex) (m2:Map Name Name) (env:Map Name Expr) (blockIdent:Option Name) (plateVertices:Option (Set Name)) (id:Option Name) (list:Bool) (ret:Bool) =
+  | TmAssume t ->
+    let id = match id with Some id then id else nameSym "" in
+    let pres = plateCheck id plateVertices in
+    --create a random variable node
+    let v = RandomVarNode {ident = id, val = None (), color = 0, dist = t.dist, list=list, plate=pres.1} in
     let g = digraphAddVertex v g in
-    -- create edges due to dependency
-    let edges = setToSeq (createEdges v g m1 m2 (setEmpty cmprEdge) t.body) in
+    -- create edges to the created random variable node v from the nodes that it depends on
+    let edges = setToSeq (createEdges v g m1 m2 (setEmpty cmprEdge) (TmAssume t)) in
     let g = digraphAddEdges edges g in
-    -- check if the value of any random variable is needed on the parameters of the distribution
-    let targets = sfold_Expr_Expr (findTargets m1) targets (TmDist d) in
-    let m1 = mapInsert t.ident v m1 in
-    let m2 = mapInsert t.ident t.ident m2 in
-    let env = mapInsert t.ident t.body env in
-    createPBN g targets m1 m2 env (None ()) t.inexpr
-
-  | TmLet ({body=TmObserve ({dist=TmDist d}&o)}&t) ->
-    let v = RandomVarNode {ident = t.ident, val = Some (o.value), color = 0, dist = o.dist,list=false} in
+    let res = --if it is a return then also create a codeblock that returns created random variable
+      if ret then
+        let idcb = nameSym "" in
+        let cb = CodeBlockNode {ident=idcb,code=nvar_ id,ret=true,list=false,plate=pres.1} in
+        let g = digraphAddVertex cb g in
+        let g = digraphAddEdge v cb 0 g in
+        let m1 = mapInsert idcb cb m1 in
+        let env = mapInsert idcb (nvar_ id) env in
+        let pV = plateCheck idcb pres.0 in
+        (g,m1,env,pV.0)
+      else (g,m1,env,pres.0) in
+    let m1 = mapInsert id v res.1 in
+    let m2 = mapInsert id id m2 in
+    let env = mapInsert id (TmAssume t) res.2 in
+    (res.0,targets,m1,m2,env,None (),res.3,Some v)
+  | TmObserve t ->
+    let id = match id with Some id then id else nameSym "" in
+    let pres = plateCheck id plateVertices in
+    let v = RandomVarNode {ident = id, val = Some (t.value), color = 0, dist = t.dist,list=list,plate=pres.1} in
     let g = digraphAddVertex v g in
-    let edges = setToSeq (createEdges v g m1 m2 (setEmpty cmprEdge) t.body) in
+    let edges = setToSeq (createEdges v g m1 m2 (setEmpty cmprEdge) (TmObserve t)) in
     let g = digraphAddEdges edges g in
-    -- check if the value of any random variable is needed on the parameters of the distribution
-    let targets = sfold_Expr_Expr (findTargets m1) targets (TmDist d) in
-    -- check if the value of any random variable is needed on the observed value, e.g. observe observedValue (Gaussian a b)
-    let targets = findRandomVariables m1 targets o.value in
-    let targets = setInsert t.ident targets in -- observe node is a target node since it changes the weight
-    let m1 = mapInsert t.ident v m1 in
-    let m2 = mapInsert t.ident t.ident m2 in
-    let env = mapInsert t.ident t.body env in
-    createPBN g targets m1 m2 env (None ()) t.inexpr
+    let targets = setInsert id targets in -- observe node is a target node since it changes the weight
+    let res =
+      if ret then
+        let idcb = nameSym "" in
+        let cb = CodeBlockNode {ident=idcb,code=nvar_ id,ret=true,list=false,plate=pres.1} in
+        let g = digraphAddVertex cb g in
+        let g = digraphAddEdge v cb 0 g in
+        let m1 = mapInsert idcb cb m1 in
+        let env = mapInsert idcb (nvar_ id) env in
+        let pV = plateCheck idcb pres.0 in
+        (g,m1,env,pV.0)
+      else (g,m1,env,pres.0) in
+    let m1 = mapInsert id v res.1 in
+    let m2 = mapInsert id id m2 in
+    let env = mapInsert id (TmObserve t) res.2 in
+    (res.0,targets,m1,m2,env,None (),res.3,Some v)
+  | TmSeq t ->
+    if list then (g,targets,m1,m2,env,None (),plateVertices,None ()) else
+    let id = match id with Some id then id else nameSym "" in
+    let pres = plateCheck id plateVertices in
+    let res = mapAccumL (lam acc. lam e.
+                    let res = createPBN2 acc.0 targets acc.1 acc.2 acc.3 (None ()) pres.0 (None ()) true false e in
+                    ((res.0,res.2,res.3,res.4),res.7)) (g,m1,m2,env) t.tms in
+    let nvalidL = any (lam v. match v with None () then true else false) res.1 in
+    let res = if nvalidL then
+      let v = match blockIdent with Some blockIdent then -- we can also put this to the previous code block
+          -- find the codeblock that this expression should be added
+          let vertex = mapLookupOrElse (lam. error "TmSeq:Lookup failed") blockIdent m1 in
+          match vertex with CodeBlockNode c then
+            let v = CodeBlockNode {c with code = bind_ c.code (nulet_ id (TmSeq t))} in
+            (v,c.ident) -- bind it to previous code
+          else never
+        else -- we need to create a new code block
+        	let ident = nameSym "" in
+          (CodeBlockNode {ident = ident, code=(nulet_ id (TmSeq t)),ret=false,list=list,plate=pres.1}, ident)--create a code block with new ident which is not a return statement
+      in (g,m1,m2,env,v)
+    else
+      let tms = map (lam v. match v with Some v then v else never) res.1 in
+      let ids = map getId tms in
+      let dist = validList (None ()) tms in
+      let v = (ListNode {ident=id, items=ids,dist=dist,plate=pres.1},id) in
+      let acc = res.0 in
+      (acc.0,acc.1,acc.2,acc.3,v)
+    in
+    let v = res.4 in
+    let m1 = res.1 in
+    let m2 = res.2 in
+    let pres = plateCheck v.1 pres.0 in
+    let g = digraphAddUpdateVertex v.0 res.0 in
+    let edges = setToSeq (createEdges v.0 g m1 m2 (setEmpty cmprEdge) (TmSeq t)) in
+    let g = digraphAddEdges edges g in
+    (g, targets, mapInsert v.1 v.0 m1, mapInsert id v.1 m2, mapInsert id (TmSeq t) res.3, None (), pres.0, Some v.0)
 
-  | TmLet ({body=TmSeq s}&t) ->
-    let res = createVertex (Some t.ident) g m1 m2 env (TmSeq s) in
-    let acc = res.0 in
-    let v = res.1 in
-    let g = acc.0 in
-    let m1 = acc.1 in
-    let m2 = acc.2 in
-    let env = acc.3 in
-    createPBN g targets m1 m2 env (None ()) t.inexpr
+  | TmApp ({lhs=(TmApp ({lhs=TmConst ({val=CCreate()}&c),rhs=TmConst ({val=CInt ({val=i}&vv)}&inc)})&a1),rhs=
+  TmLam l}&a2) ->
+    if list then (g,targets,m1,m2,env,None (),plateVertices,None ()) else
+    let id = match id with Some id then id else nameSym "" in
+    let pres = plateCheck id plateVertices in
+    let nvalidL = match l.body with TmAssume _ then false else match l.body with TmObserve _ then false else true in
+    let res =
+      if nvalidL then
+      let v = match blockIdent with Some blockIdent then -- we can also put this to the previous code block
+          -- find the codeblock that this expression should be added
+          let vertex = mapLookupOrElse (lam. error "TmSeq:Lookup failed") blockIdent m1 in
+          match vertex with CodeBlockNode c then
+            let v = CodeBlockNode {c with code = bind_ c.code (nulet_ id (TmApp a2))} in
+            (v,c.ident) -- bind it to previous code
+          else never
+        else -- we need to create a new code block
+        	let ident = nameSym "" in
+          (CodeBlockNode {ident = ident, code=(nulet_ id (TmApp a2)),ret=false,list=list,plate=pres.1}, ident)--create a code block with new ident which is not a return statement
+      in (g,m1,m2,env,v)
+    else
+      let res = mapAccumL (lam acc. lam e.
+                    let res = createPBN2 acc.0 targets acc.1 acc.2 acc.3 (None ()) pres.0 (None ()) true false l.body in
+                    let g = res.0 in
+                    let targets = res.1 in
+                    let m1 = res.2 in
+                    let m2 = res.3 in
+                    let env = res.4 in
+                    let v = res.7 in
+                    ((g,m1,m2,mapInsert l.ident (nvar_ l.ident) env),v)) (g,m1,m2,env) (make i 0) in
+      let acc = res.0 in
+      let g = acc.0 in
+      let m1 = acc.1 in
+      let m2 = acc.2 in
+      let env = acc.3 in
+      let tms = map (lam v. match v with Some v then v else never) res.1 in
+      let dist = validList (None ()) tms in
+      let ids = map getId tms in
+      let v = (ListNode {ident=id, items = ids, dist=dist,plate=pres.1},id) in
+      (g,m1,m2,env,v) in
+    let v = res.4 in
+    let m1 = res.1 in
+    let m2 = res.2 in
+    let env = res.3 in
+    let g = digraphAddVertex v.0 res.0 in
+    let edges = setToSeq (createEdges v.0 g m1 m2 (setEmpty cmprEdge) (TmApp a2)) in
+    let g = digraphAddEdges edges g in
+    (g, targets, mapInsert id v.0 m1, mapInsert id v.1 m2, env, None (), pres.0, Some v.0)
 
-  | TmLet ({body=TmApp ({lhs=(TmApp ({lhs=TmConst ({val=CGet ()}&c),rhs=TmVar seq})&t2),rhs=index}&a)}&t) ->
+ | TmApp ({lhs=(TmApp ({lhs=TmConst ({val=CGet ()}&c),rhs=TmVar seq})&t2),rhs=index}&a) ->
+    if list then (g,targets,m1,m2,env,None (),plateVertices,None ()) else
+    let id = match id with Some id then id else nameSym "" in
+    let pres = plateCheck id plateVertices in
+    let pvs = pres.0 in
     let trgt = get_ (TmVar seq) index in
     let seqV = mapLookupOrElse (lam. error "Lookup failed") seq.ident m1 in
-    let m = MultiplexerNode {ident=t.ident,index=index} in
+    let m = MultiplexerNode {ident=id,index=index,plate=pres.1} in
     let g = digraphAddVertex m g in
-    let m1 = mapInsert t.ident m m1 in
-    let m2 = mapInsert t.ident t.ident m2 in
-    let edges = setToSeq (createEdges m g m1 m2 (setEmpty cmprEdge) t.body) in
+    let m1 = mapInsert id m m1 in
+    let m2 = mapInsert id id m2 in
+    let env = mapInsert id (TmApp a) env  in
+    let edges = setToSeq (createEdges m g m1 m2 (setEmpty cmprEdge) (TmApp a)) in
     let g = digraphAddEdges edges g in
-    let targets = findRandomVariables m1 targets index in
-    createPBN g targets m1 m2 env (None ()) t.inexpr
-/- not supported yet
-  | TmLet ({body=TmApp ({lhs=(TmApp ({lhs=TmConst ({val=CIter()}&c),rhs=lambda})&a1),rhs=lst}&a2)}&t) ->  print "gothca";  createPBN g targets m1 m2 env (None ()) t.inexpr
-  | TmLet t ->
-    let v =
-      match blockIdent with Some blockIdent then -- we can also put this to the previous code block
-        -- find the codeblock that this expression should be added
-        let vertex = mapLookupOrElse (lam. error "Lookup failed") blockIdent m1 in
-        match vertex with CodeBlockNode c then
-          CodeBlockNode {c with code = bind_ c.code (TmLet {t with inexpr = unit_})} -- bind it to previous code
-        else never
-      else -- we need to create a new code block
-        CodeBlockNode {ident = nameSym "", code=TmLet {t with inexpr = unit_},ret=false,list=false} --create a code block with new ident which is not a return statement
-    in
--- depending on whether we created a new node or updated the existing one add/update the node on the graph.
-    let g = digraphAddUpdateVertex v g in
-
-    -- update the mapping from the vertex ident to the vertex
-    let blockIdent = match v with CodeBlockNode c then c.ident else never in
-    let m1 = mapInsert blockIdent v m1 in
-
-    --create the edges
-    let edges = setToSeq (createEdges v g m1 m2 (setEmpty cmprEdge) t.body) in
-    let g = digraphMaybeAddEdges edges g in
-
-    -- create the targets
-    let targets = findRandomVariables m1 targets t.body in
-    createPBN g targets m1 (mapInsert t.ident blockIdent m2) (mapInsert t.ident t.body env) (Some blockIdent) t.inexpr
- -/
-  | TmRecLets t ->
-    -- for each binding add the ident to the map
-    let v =
-      match blockIdent with Some blockIdent then -- we can also put this to the previous code block
-        -- find the codeblock that this expression should be added
-        let vertex = mapLookupOrElse (lam. error "Lookup failed") blockIdent m1 in
-        match vertex with CodeBlockNode c then
-          CodeBlockNode {c with code = (bind_ c.code (TmRecLets {t with inexpr = unit_}))} -- add it to sequence of code
-        else never
-      else -- we need to create a new code block
-        CodeBlockNode {ident = nameSym "", code=TmRecLets {t with inexpr = unit_}, ret=false,list=false} --create a code block with new ident which is not a return statement
-    in
-    let g = digraphAddUpdateVertex v g in
-    let blockIdent = match v with CodeBlockNode c then c.ident else never in
-
-    let res = foldl (lam acc. lam b.
-      let edges = setToSeq (createEdges v g m1 m2 (setEmpty cmprEdge) b.body) in
-      let g = digraphMaybeAddEdges edges g in
-
-      -- create the targets
-      let targets = findRandomVariables m1 targets b.body in
-      (g,mapInsert b.ident v acc.1, mapInsert b.ident blockIdent acc.2, targets)
-      ) (g,m1,m2,targets) t.bindings
-    in
-    createPBN res.0 res.3 res.1 res.2 env (Some blockIdent) t.inexpr
-  | TmExt t ->
-    let v =
-      match blockIdent with Some blockIdent then -- we can also put this to the previous code block
-        -- find the codeblock that this expression should be added
-        let vertex = mapLookupOrElse (lam. error "Lookup failed") blockIdent m1 in
-        match vertex with CodeBlockNode c then
-          CodeBlockNode {c with code = (bind_ c.code (TmExt {t with inexpr = unit_}))} -- add it to sequence of code
-        else never
-      else -- we need to create a new code block
-        CodeBlockNode {ident = nameSym "", code=TmExt {t with inexpr = unit_}, ret=false,list=false} --create a code block with new ident which is not a return statement
-    in
-    -- update the mapping from the vertex ident to the vertex
-    let blockIdent = match v with CodeBlockNode c then c.ident else never in
-    let m1 = mapInsert blockIdent v m1 in
-    let g = digraphAddUpdateVertex v g in
-
-    createPBN g targets (mapInsert t.ident v m1) (mapInsert t.ident blockIdent m2) env (Some blockIdent) t.inexpr
-  | TmType t ->
+    (g, targets, m1, m2, env, None (), pvs, Some m)
+ | TmApp ({lhs=(TmApp ({lhs=TmConst ({val=CIter()}&c),rhs=TmLam l})&a1),rhs=TmVar lst}&a2) ->
+    if list then (g, targets, m1, m2, env, None (),plateVertices, None ()) else
+    let id = match id with Some id then id else nameSym "" in
+     let res = createPBN g targets m1 m2 (mapInsert l.ident (nvar_ l.ident) env) (None ()) (Some (setEmpty nameCmp)) l.body in
+    let pres = plateCheck id plateVertices in
+    let pvs = pres.0 in
+    let g = res.0 in
+    let m1 = res.2 in
+    let m2 = res.3 in
+    let env = res.4 in
+    let vertices = res.6 in
+    let vertices = match vertices with Some v then v else never in
+    let plate = PlateNode {ident=id, lamVar=l.ident,iter=lst.ident, vertices= vertices,plate=pres.1} in
+    let g = digraphAddVertex plate g in
+    let edges = setToSeq (createEdges plate g m1 m2 (setEmpty cmprEdge) (TmVar lst)) in
+    let g = digraphAddEdges edges g in
+    (g, targets, mapInsert id plate m1, mapInsert id id m2, env, None (), pvs, Some plate)
+ | t ->
+  if list then (g, targets, m1, m2, env, None (),plateVertices, None ()) else
+  let plate = match plateVertices with Some _ then true else false in
   let v =
-      match blockIdent with Some blockIdent then -- we can also put this to the previous code block
-        -- find the codeblock that this expression should be added
-        let vertex = mapLookupOrElse (lam. error "Lookup failed") blockIdent m1 in
-        match vertex with CodeBlockNode c then
-          CodeBlockNode {c with code = (bind_ c.code (TmType {t with inexpr = unit_}))} -- add it to sequence of code
-        else never
-      else -- we need to create a new code block
-        CodeBlockNode {ident = nameSym "", code=TmType {t with inexpr = unit_}, ret=false,list=false} --create a code block with new ident which is not a return statement
-    in
-     -- update the mapping from the vertex ident to the vertex
-    let blockIdent = match v with CodeBlockNode c then c.ident else never in
-    let m1 = mapInsert blockIdent v m1 in
-    let g = digraphAddUpdateVertex v g in
-    createPBN g targets (mapInsert t.ident v m1) (mapInsert t.ident blockIdent m2) env (Some blockIdent) t.inexpr
-
-  | TmConDef t ->
-  let v =
-      match blockIdent with Some blockIdent then -- we can also put this to the previous code block
-        -- find the codeblock that this expression should be added
-        let vertex = mapLookupOrElse (lam. error "Lookup failed") blockIdent m1 in
-        match vertex with CodeBlockNode c then
-          CodeBlockNode {c with code = (bind_ c.code (TmConDef {t with inexpr = unit_}))} -- add it to sequence of code
-        else never
-      else -- we need to create a new code block
-        CodeBlockNode {ident = nameSym "", code=TmConDef {t with inexpr = unit_}, ret=false,list=false} --create a code block with new ident which is not a return statement
-    in
-     -- update the mapping from the vertex ident to the vertex
-    let blockIdent = match v with CodeBlockNode c then c.ident else never in
-    let m1 = mapInsert blockIdent v m1 in
-    let g = digraphAddUpdateVertex v g in
-    createPBN g targets (mapInsert t.ident v m1) (mapInsert t.ident blockIdent m2) env (Some blockIdent) t.inexpr
-
-  | t ->
-    let id = nameSym "" in
-    let v = CodeBlockNode {ident = id, code =t, ret=true,list=false} in
+    match id with Some id then
+      match blockIdent with Some bid then
+          -- find the codeblock that this expression should be added
+          let vertex = mapLookupOrElse (lam. error "Lookup failed") bid m1 in
+          match vertex with CodeBlockNode c then
+            let v = CodeBlockNode {c with code = bind_ c.code (nulet_ id t)} in
+            (v,targets, mapInsert c.ident v m1, mapInsert id c.ident m2,mapInsert id t env,c.ident) -- bind it to previous code
+          else never
+        else -- we need to create a new code block
+          let ident = nameSym "" in
+          let v = CodeBlockNode {ident = ident, code=(nulet_ id t),ret=false,list=list,plate=plate} in
+          (v, targets,mapInsert ident v m1, mapInsert id ident m2,mapInsert id t env,ident)
+    else
+      let ident = nameSym "" in
+      let v = CodeBlockNode {ident = ident, code=t, ret=true,list=false,plate=plate} in
+      (v, findRandomVariables m1 targets t, mapInsert ident v m1, m2,env,ident) in
+    let g = digraphAddUpdateVertex v.0 g in
+    let pres = plateCheck v.5 plateVertices in
+    let pvs = pres.0 in
     -- create the targets
-    let targets = findRandomVariables m1 targets t in
-    let g = digraphAddVertex v g in
-    (g, mapInsert id v m1, targets)
+    (g, v.1, v.2, v.3, v.4, Some v.5, pvs, Some v.0)
 
    sem recreateLVertex =
    | CodeBlockNode t -> t.code
@@ -467,16 +504,17 @@ lang StaticAnalyzer = PBN + MExprAst + MExprPPL + ConjugatePrior
                         else
                          (TmAssume {dist=v.dist, ty=tyunknown_, info = NoInfo ()})
 
-   sem recreateVertex (vRet:Option Vertex) (g:Digraph Vertex Label) (m:Map Name Vertex) =
-  | [CodeBlockNode t] ++ as -> if t.list then recreateVertex vRet g m as else bind_ t.code (recreateVertex vRet g m as)
+   sem recreateVertex (vRet:Option Vertex) (g:Digraph Vertex Label) (m:Map Name Vertex) (plate:Bool) =
+  | [CodeBlockNode t] ++ as -> if or t.list t.plate then recreateVertex vRet g m plate as else bind_ t.code (recreateVertex vRet g m plate as)
   | [RandomVarNode v] ++ as ->
-                        if v.list then recreateVertex vRet g m as
+                        if and (not plate) (or v.list v.plate) then
+                         recreateVertex vRet g m false as
                         else
                          match v.val with Some val then -- observe
                           TmLet { ident = v.ident,
                                 tyBody = tyunknown_,
                                 body = (TmObserve {dist=v.dist, value=val,ty=tyunknown_, info = NoInfo ()}),
-                                inexpr=(recreateVertex vRet g m as),
+                                inexpr=(recreateVertex vRet g m plate as),
                                 ty=tyunknown_,
                                 info = NoInfo (),
                                 tyAnnot = tyunknown_}
@@ -484,7 +522,7 @@ lang StaticAnalyzer = PBN + MExprAst + MExprPPL + ConjugatePrior
                           TmLet { ident = v.ident,
                                 tyBody = tyunknown_,
                                 body = (TmAssume {dist=v.dist, ty=tyunknown_, info = NoInfo ()}),
-                                inexpr=(recreateVertex vRet g m as),
+                                inexpr=(recreateVertex vRet g m plate as),
                                 ty=tyunknown_,
                                 info= NoInfo (),
                                 tyAnnot = tyunknown_}
@@ -492,7 +530,7 @@ lang StaticAnalyzer = PBN + MExprAst + MExprPPL + ConjugatePrior
                           TmLet { ident = l.ident,
                                   tyBody = tyunknown_,
                                   body = (TmSeq {tms=(map recreateLVertex vItems), ty=tyunknown_,info=NoInfo ()}),
-                                  inexpr =(recreateVertex vRet g m as),
+                                  inexpr =(recreateVertex vRet g m plate as),
                                   ty = tyunknown_,
                                   info = NoInfo (),
                                   tyAnnot = tyunknown_}
@@ -501,18 +539,31 @@ lang StaticAnalyzer = PBN + MExprAst + MExprPPL + ConjugatePrior
                                       TmLet { ident = mu.ident,
                                         tyBody = tyunknown_,
                                         body = get_ (nvar_ l.ident) mu.index,
-                                        inexpr=(recreateVertex vRet g m as),
+                                        inexpr=(recreateVertex vRet g m plate as),
                                         ty=tyunknown_,
                                         info= NoInfo (),
                                         tyAnnot = tyunknown_}
                                     else never
+  | [PlateNode p] ++ as ->
+ let vItems = map (lam i. mapLookupOrElse (lam. error "Recreate:Lookup failed") i m) (setToSeq p.vertices) in
+-- iter (lam v. print (v2str v)) vItems;
+let vPRet = get (filter (lam v. match v with CodeBlockNode c then c.ret else false) vItems) 0 in
+                          TmLet { ident = p.ident,
+                                  tyBody = tyunknown_,
+                                  body = (iter_
+                                    (nulam_ p.lamVar
+                                      (recreateVertex (Some vPRet) g m true vItems)) (nvar_ p.iter)),
+                                  inexpr =(recreateVertex vRet g m false as),
+                                  ty = tyunknown_,
+                                  info = NoInfo (),
+                                  tyAnnot = tyunknown_}
                                    -- else recreateVertex vRet g m as
   | [] -> match vRet with Some (CodeBlockNode c) then c.code else error "no return"
 
 end
 
 lang PBNTransformer = StaticAnalyzer + ConjugatePrior end
-let debug = false
+let debug = true
 
 let modifiedBFS : all v. all l. v -> v -> Digraph v l -> Bool
   = lam source. lam dst. lam g.
@@ -752,11 +803,11 @@ let marginalize = use PBNTransformer in
             let qDist = res.0 in
             let m = res.2 in
             let lid = nameSym "params" in
-            let parameterList = ListNode {ident=lid,items=res.3,dist=None ()} in
+            let parameterList = ListNode {ident=lid,items=res.3,dist=None (),plate=false} in
             let m = mapInsert lid parameterList m in
             let g = digraphAddVertex parameterList g in
             let muxid = nameSym "muxParam" in
-            let muxList = MultiplexerNode {ident=muxid, index=p.index} in
+            let muxList = MultiplexerNode {ident=muxid, index=p.index,plate=false} in
             let m = mapInsert muxid muxList m in
             let g = digraphAddVertex muxList g in
             let g = match indexMultiplexer g parent with Some i then
@@ -946,7 +997,7 @@ let modifyGraph = use StaticAnalyzer in
   foldl (lam g. lam l.
           match l with ListNode r then
             foldl (lam g:Digraph Vertex Label. lam id:Name.
-                    let i = mapLookupOrElse (lam. error "Lookup failed") id m in
+                    let i = mapLookupOrElse (lam. error "modify:Lookup failed") id m in
                     let edges = digraphEdgesTo i g in
                     digraphMaybeAddEdges (map (lam e. (e.0,l,e.2)) edges) g) g r.items else never) g lists
 
@@ -954,37 +1005,47 @@ let analyze = lam prog.
   use StaticAnalyzer in
   let emptyG = digraphEmpty cmprVertex eqi in
   let emptyM = mapEmpty nameCmp in
-  createPBN emptyG (setEmpty nameCmp) emptyM emptyM emptyM (None ()) prog
+  createPBN emptyG (setEmpty nameCmp) emptyM emptyM emptyM (None ()) (None ()) prog
 
 let recreate = lam g:Digraph Vertex Label. lam m:Map Name Vertex.
   use StaticAnalyzer in
   let g = modifyGraph g m in
   let order = digraphTopologicalOrder g in
-  let vRet = filter (lam v. match v with CodeBlockNode c then c.ret else false) order in
+  let vRet = filter (lam v. match v with CodeBlockNode c then and c.ret (not c.plate) else false) order in
   let order = filter (lam v. match v with CodeBlockNode c then not c.ret else true) order in
-  recreateVertex (Some (get vRet 0)) g m order
+  recreateVertex (Some (get vRet 0)) g m false order
 
 let transformM = lam model.
   use ConjugatePrior in
-  let g = analyze model in
-  --digraphPrintDot g.0 v2str int2string;
+  print (mexprToString model);
+  let res = analyze model in
+  let g = res.0 in
+  let targets = res.1 in
+  let m1 = res.2 in
+  let m2 = res.3 in
+  let env = res.4 in
+  digraphPrintDot g v2str int2string;
   --print "\n";
+  iter (lam v. print (v2str v);print "\n" ) (digraphVertices g);
+
   --digraphPrintVertices g.0 v2str;
   --digraphPrintDot g.0 v2str int2string;
   --print "\n";
-  let targetVertices = map (lam i. mapLookupOrElse (lam. error "Lookup failed") i g.1)  (setToSeq g.2) in
+  let targetVertices = map (lam i. mapLookupOrElse (lam. error "Lookup failed") i m1)  (setToSeq targets) in
   let targetObserves = filter (lam v. match v with RandomVarNode v then (match v.val with Some _ then true else false) else false) targetVertices in
   let targets = filter (lam v. match v with RandomVarNode v then (match v.val with Some _ then false else true) else true) targetVertices in
-  let res = transformModel g.0 (concat targetObserves targets) g.1 in
+ /- let res = transformModel g (concat targetObserves targets) m1 in
   --let qDist = res.0 in
   --print "\n qDIST\n";
   --iter (lam b. print (join [let id= b.0 in id.0," ", match b.1 with Some d then (expr2str d) else "no dist", "\n"])) (mapBindings qDist);
   let rg = res.1 in
-  let m = res.2 in
+  let m = res.2 in-/
   --digraphPrintDot rg v2str int2string;
   --print "\n\n";
   --digraphPrintVertices rg v2str;
-  let rProg = recreate rg m in-- m in
+  print "\nRECREATE\n";
+  let rProg = recreate g m1 in
+  --let rProg = recreate rg m in-- m in
   rProg
 
 lang Transformation = ConjugatePrior
@@ -1008,9 +1069,9 @@ lang Transformation = ConjugatePrior
     | _ -> true
 
   sem transform =
-  | prog -> transformH prog
+  | prog -> transformM prog
  -- | prog -> transformH (normalizeTerm prog)
-
+/-
   sem transformH =
     | TmLet t -> match isLastLetBinding t.inexpr with true then
                   match t.body with TmLam l then
@@ -1021,7 +1082,7 @@ lang Transformation = ConjugatePrior
     | TmConDef t -> TmConDef {t with inexpr=transformH t.inexpr}
     | TmType t -> TmType {t with inexpr=transformH t.inexpr}
     | TmExt t -> TmExt {t with inexpr=transformH t.inexpr}
-    | t -> t
+    | t -> t-/
 end
 
 mexpr
