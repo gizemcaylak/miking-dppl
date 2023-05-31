@@ -27,10 +27,12 @@ lang PBN
                       index:Expr,
                       plateId:Option Name} --if it belongs to a plate
   | PlateNode {ident:Name,
-               lamVar:Name, -- new variable introduced
+               lamVar:[Name], -- new variables introduced
                iter:Name, -- name of the observations to iterate over
                vertices:Set Name, -- name set of vertices a plate contains
-               plateId:Option Name} --if it belongs to a plate
+               plateId:Option Name,
+               ret:Option Name,
+               acc:Option Name} --if it belongs to a plate
 
   sem cmprVertex (v1:Vertex) =
   | RandomVarNode v2 -> match v1 with RandomVarNode t then
@@ -173,6 +175,29 @@ lang ConjugatePrior = CorePPL + MExprAst + MExprPPL + PBN
   | [] -> commonDist
   | [t] ++ as -> None ()
 
+  sem getParams =
+  | TmDist d -> getParamsHelper d.dist
+  | _ -> error "not a distribution"
+
+  sem getParamsHelper =
+  | DBernoulli d -> utuple_ [d.p]
+  | DBeta d -> utuple_ [d.a,d.b]
+  | DGaussian d -> utuple_ [d.mu, d.sigma]
+  | DCategorical d -> utuple_ [d.p]
+  | DDirichlet d -> utuple_ [d.a]
+
+  sem changeParams (id:Name) =
+  | TmDist d -> TmDist {d with dist =changeParamsHelper id d.dist}
+  | _ -> error "not a distribution"
+
+
+  sem changeParamsHelper (id:Name) =
+  | DBernoulli d -> DBernoulli {d with p= tupleproj_ 0 (nvar_ id) }
+  | DBeta d -> DBeta {{d with a=tupleproj_ 0 (nvar_ id) } with b=tupleproj_ 1 (nvar_ id) }
+  | DGaussian d -> DGaussian {{d with mu=tupleproj_ 0 (nvar_ id)} with sigma=tupleproj_ 1 (nvar_ id) }
+  | DCategorical d -> DCategorical {d with p= tupleproj_ 0 (nvar_ id)}
+  | DDirichlet d -> DDirichlet {d with a=tupleproj_ 0 (nvar_ id)}
+
   -- given the likelihood,the prior and the observartion calculates the posterior
   -- (d1: likelihood, d2: prior)
   sem posterior (obs: Option Expr) (indices:Option (Expr,Expr)) (plateId:Option Name) =
@@ -299,8 +324,8 @@ lang StaticAnalyzer = PBN + MExprAst + MExprPPL + ConjugatePrior
                             let v = CodeBlockNode {ident=ident,code=(nulet_ id t),ret=false,list=list, plateId=plate} in
                             (v,ident)
   | _ -> let ident = nameSym "" in
-                            let v = CodeBlockNode {ident=ident,code=t,ret=true,list=false, plateId=plate} in
-                            (v,ident)
+         let v = CodeBlockNode {ident=ident,code=t,ret=true,list=false, plateId=plate} in
+         (v,ident)
 
   -- m1: a mapping from a vertex ident to a corresponding vertex 
   -- m2: a mapping from a variable name to its corresponding vertex id. Several let bindings can corresspond to a single code block vertex
@@ -331,7 +356,7 @@ sem createPBN2 (g:Digraph Vertex Label) (targets:Set Name) (m1:Map Name Vertex) 
     let res = --if it is a return then also create a codeblock that returns created random variable
       if ret then
         let idcb = nameSym "" in
-        let cb = CodeBlockNode {ident=idcb,code=nvar_ id,ret=true,list=false,plateId=pres.1} in
+        let cb = CodeBlockNode {ident=idcb,code=nvar_ id,ret=ret,list=false,plateId=pres.1} in
         let g = digraphAddVertex cb g in
         let g = digraphAddEdge v cb 0 g in
         let m1 = mapInsert idcb cb m1 in
@@ -401,7 +426,7 @@ sem createPBN2 (g:Digraph Vertex Label) (targets:Set Name) (m1:Map Name Vertex) 
     let pres = plateCheck v.1 pres.0 in
     let g = digraphAddUpdateVertex v.0 res.0 in
     let edges = setToSeq (createEdges v.0 g m1 m2 (setEmpty cmprEdge) (TmSeq t)) in
-    let g = digraphAddEdges edges g in
+    let g = digraphMaybeAddEdges edges g in
     (g, targets, mapInsert v.1 v.0 m1, mapInsert id v.1 m2, mapInsert id (TmSeq t) res.3, None (), pres.0, Some v.0)
 
   | TmApp ({lhs=(TmApp ({lhs=TmConst ({val=CCreate()}&c),rhs=TmConst ({val=CInt ({val=i}&vv)}&inc)})&a1),rhs=
@@ -449,7 +474,7 @@ sem createPBN2 (g:Digraph Vertex Label) (targets:Set Name) (m1:Map Name Vertex) 
     let env = res.3 in
     let g = digraphAddVertex v.0 res.0 in
     let edges = setToSeq (createEdges v.0 g m1 m2 (setEmpty cmprEdge) (TmApp a2)) in
-    let g = digraphAddEdges edges g in
+    let g = digraphMaybeAddEdges edges g in
     (g, targets, mapInsert id v.0 m1, mapInsert id v.1 m2, env, None (), pres.0, Some v.0)
 
  | TmApp ({lhs=(TmApp ({lhs=TmConst ({val=CGet ()}&c),rhs=TmVar seq})&t2),rhs=index}&a) ->
@@ -485,8 +510,59 @@ sem createPBN2 (g:Digraph Vertex Label) (targets:Set Name) (m1:Map Name Vertex) 
     let env = res.4 in
     let vertices = res.6 in
     let vertices = match vertices with Some (id,v) then v else never in
-    let plate = PlateNode {ident=id, lamVar=l.ident,iter=lst.ident, vertices= vertices,plateId=pres.1} in
+    let plate = PlateNode {ident=id, lamVar=[l.ident],iter=lst.ident, vertices= vertices,plateId=pres.1,ret=None (),acc=None ()} in
     let g = digraphAddVertex plate g in
+    let res = --if it is a return then also create a codeblock that returns created variable
+      if ret then
+        let idcb = nameSym "" in
+        let cb = CodeBlockNode {ident=idcb,code=nvar_ id,ret=ret,list=false,plateId=pres.1} in
+        let g = digraphAddVertex cb g in
+        let g = digraphAddEdge plate cb 0 g in
+        let m1 = mapInsert idcb cb m1 in
+        let env = mapInsert idcb (nvar_ id) env in
+        let pV = plateCheck idcb pvs in
+        (g,m1,env,pV.0)
+      else (g,m1,env,pvs) in
+    let m1 = res.1 in
+    let env = res.2 in
+    let g = res.0 in
+    let pvs = res.3 in
+    let edges = setToSeq (createEdges plate g m1 m2 (setEmpty cmprEdge) (TmVar lst)) in
+    let g = digraphAddEdges edges g in
+    (g, targets, mapInsert id plate m1, mapInsert id id m2, env, None (), pvs, Some plate)
+  | TmApp ({lhs=(TmApp ({lhs=TmConst ({val=CIteri()}&c),rhs=TmLam ({body=TmLam l2}&l1)})&a1),rhs=TmVar lst}&a2) ->
+    if list then (g, targets, m1, m2, env, None (),plateV, None ()) else
+    let id = match id with Some id then id else nameSym "" in
+    let env = mapInsert l1.ident (nvar_ l1.ident) env in
+    let env = mapInsert l2.ident (nvar_ l2.ident) env in
+    let res = createPBN g targets m1 m2 env (None ()) (Some (id,(setEmpty nameCmp))) l2.body in
+    let pres = plateCheck id plateV in
+    let pvs = pres.0 in
+    let g = res.0 in
+    let targets = res.1 in
+    let m1 = res.2 in
+    let m2 = res.3 in
+    let env = res.4 in
+    let vertices = res.6 in
+    let vertices = match vertices with Some (id,v) then v else never in
+    let plate = PlateNode {ident=id, lamVar=[l1.ident,l2.ident],iter=lst.ident, vertices= vertices,plateId=pres.1,ret=None(),acc=None()} in
+    let g = digraphAddVertex plate g in
+    let res = --if it is a return then also create a codeblock that returns created variable
+      if ret then
+        let idcb = nameSym "" in
+        let cb = CodeBlockNode {ident=idcb,code=nvar_ id,ret=ret,list=false,plateId=pres.1} in
+        let g = digraphAddVertex cb g in
+        let g = digraphAddEdge plate cb 0 g in
+        let m1 = mapInsert idcb cb m1 in
+        let env = mapInsert idcb (nvar_ id) env in
+        let pV = plateCheck idcb pvs in
+        (g,m1,env,pV.0)
+      else (g,m1,env,pvs) in
+    let m1 = res.1 in
+    let env = res.2 in
+    let g = res.0 in
+    let pvs = res.3 in
+
     let edges = setToSeq (createEdges plate g m1 m2 (setEmpty cmprEdge) (TmVar lst)) in
     let g = digraphAddEdges edges g in
     (g, targets, mapInsert id plate m1, mapInsert id id m2, env, None (), pvs, Some plate)
@@ -496,7 +572,7 @@ sem createPBN2 (g:Digraph Vertex Label) (targets:Set Name) (m1:Map Name Vertex) 
     let v = createCodeBlock m1 list plate t (id,blockIdent) in
     let g = digraphAddUpdateVertex v.0 g in
     let edges = setToSeq (createEdges v.0 g m1 m2 (setEmpty cmprEdge) t) in
-    let g = digraphAddEdges edges g in
+    let g = digraphMaybeAddEdges edges g in
     let pres = plateCheck v.1 plateV in
     let targets = findRandomVariables m1 targets t in
     let m1 = mapInsert v.1 v.0 m1 in
@@ -513,6 +589,96 @@ lang Reconstructor = PBN + MExprAst + MExprPPL
                         else
                          (TmAssume {dist=v.dist, ty=tyunknown_, info = NoInfo ()})
 
+   sem recreateVertex (vRet:Option Vertex) (g:Digraph Vertex Label) (m:Map Name Vertex) (plate:Bool) (plateVertices:Map Name [Vertex])=
+  | [CodeBlockNode t] ++ as -> 
+                  let pl = match t.plateId with Some _ then true else false in 
+  								if and (not plate) (or t.list pl) then 
+  									recreateVertex vRet g m plate plateVertices as 
+  								else bind_ t.code (recreateVertex vRet g m plate plateVertices as)
+  | [RandomVarNode v] ++ as ->
+                        let pl = match v.plateId with Some _ then true else false in 
+                        if and (not plate) (or v.list pl) then
+                         recreateVertex vRet g m false plateVertices as
+                        else
+                         match v.val with Some val then -- observe
+                          TmLet { ident = v.ident,
+                                tyBody = tyunknown_,
+                                body = (TmObserve {dist=v.dist, value=val,ty=tyunknown_, info = NoInfo ()}),
+                                inexpr=(recreateVertex vRet g m plate plateVertices as),
+                                ty=tyunknown_,
+                                info = NoInfo (),
+                                tyAnnot = tyunknown_}
+                        else
+                          TmLet { ident = v.ident,
+                                tyBody = tyunknown_,
+                                body = (TmAssume {dist=v.dist, ty=tyunknown_, info = NoInfo ()}),
+                                inexpr=(recreateVertex vRet g m plate plateVertices as),
+                                ty=tyunknown_,
+                                info= NoInfo (),
+                                tyAnnot = tyunknown_}
+  | [ListNode l] ++ as -> let vItems = map (lam i. mapLookupOrElse (lam. error "Recreate:Lookup failed") i m) l.items in
+                          TmLet { ident = l.ident,
+                                  tyBody = tyunknown_,
+                                  body = (TmSeq {tms=(map recreateLVertex vItems), ty=tyunknown_,info=NoInfo ()}),
+                                  inexpr =(recreateVertex vRet g m plate plateVertices as),
+                                  ty = tyunknown_,
+                                  info = NoInfo (),
+                                  tyAnnot = tyunknown_}
+  | [MultiplexerNode mu] ++ as ->  let listnode = inputMultiplexer g (MultiplexerNode mu) in
+                                    match listnode with ListNode l then
+                                      TmLet { ident = mu.ident,
+                                        tyBody = tyunknown_,
+                                        body = get_ (nvar_ l.ident) mu.index,
+                                        inexpr=(recreateVertex vRet g m plate plateVertices as),
+                                        ty=tyunknown_,
+                                        info= NoInfo (),
+                                        tyAnnot = tyunknown_}
+                                    else never
+  | [PlateNode p] ++ as ->
+     let pl = match p.plateId with Some _ then true else false in 
+                        if and (not plate) pl then
+                         recreateVertex vRet g m false plateVertices as
+                        else
+  let vItems = mapLookupOrElse (lam. error "Recreate-plate:Lookup failed") p.ident plateVertices in
+let vPRet = get (filter (lam v. match v with CodeBlockNode c then c.ret else false) vItems) 0 in
+let vItems = filter (lam v. match v with CodeBlockNode c then not c.ret else true) vItems in
+let bdyIn = (recreateVertex (Some vPRet) g m true plateVertices vItems) in
+let bdy = foldl (lam acc. lam l. nulam_ l acc) bdyIn (reverse p.lamVar) in
+  let tlet =
+  match p.ret with Some ret then
+  let accName = match p.acc with Some acc then acc else never in
+   TmLet { ident = ret,
+                                  tyBody = tyunknown_,
+                                  body = foldl_ bdy (nvar_ accName) (nvar_ p.iter),
+                                  inexpr =(recreateVertex vRet g m false plateVertices as),
+                                  ty = tyunknown_,
+                                  info = NoInfo (),
+                                  tyAnnot = tyunknown_}
+
+  else
+  match length p.lamVar with 1 then
+    TmLet { ident = p.ident,
+                                  tyBody = tyunknown_,
+                                  body = (iter_
+                                    (nulam_ (get p.lamVar 0)
+                                      (recreateVertex (Some vPRet) g m true plateVertices vItems)) (nvar_ p.iter)),
+                                  inexpr =(recreateVertex vRet g m false plateVertices as),
+                                  ty = tyunknown_,
+                                  info = NoInfo (),
+                                  tyAnnot = tyunknown_}
+  else
+        TmLet { ident = p.ident,
+                                  tyBody = tyunknown_,
+                                  body = (iteri_ (nulam_ (get p.lamVar 0) (nulam_ (get p.lamVar 1)
+                                      (recreateVertex (Some vPRet) g m true plateVertices vItems))) (nvar_ p.iter)),
+                                  inexpr =(recreateVertex vRet g m false plateVertices as),
+                                  ty = tyunknown_,
+                                  info = NoInfo (),
+                                  tyAnnot = tyunknown_} in
+                               tlet                                   -- else recreateVertex vRet g m as
+  | [] -> match vRet with Some (CodeBlockNode c) then c.code else error "no return"
+
+                   /-   
    sem recreateVertex (vRet:Option Vertex) (g:Digraph Vertex Label) (m:Map Name Vertex) (plate:Bool) (plateVertices:Map Name [Vertex])=
   | [CodeBlockNode t] ++ as -> let pl = match t.plateId with Some _ then true else false in if and (not plate) (or t.list pl) then recreateVertex vRet g m plate plateVertices as else bind_ t.code (recreateVertex vRet g m plate plateVertices as)
   | [RandomVarNode v] ++ as ->
@@ -555,23 +721,49 @@ lang Reconstructor = PBN + MExprAst + MExprPPL
                                         tyAnnot = tyunknown_}
                                     else never
   | [PlateNode p] ++ as ->
- --let vItems = map (lam i. mapLookupOrElse (lam. error "Recreate-Plate:Lookup failed") i m) (setToSeq p.vertices) in
+     let pl = match p.plateId with Some _ then true else false in 
+                        if and (not plate) pl then
+                         recreateVertex vRet g m false plateVertices as
+                        else
   let vItems = mapLookupOrElse (lam. error "Recreate-plate:Lookup failed") p.ident plateVertices in
- --- iter (lam v. print (v2str v)) vItems;
 let vPRet = get (filter (lam v. match v with CodeBlockNode c then c.ret else false) vItems) 0 in
 let vItems = filter (lam v. match v with CodeBlockNode c then not c.ret else true) vItems in
-                          TmLet { ident = p.ident,
+let bdyIn = (recreateVertex (Some vPRet) g m true plateVertices vItems) in
+let bdy = foldl (lam acc. lam l. nulam_ l acc) bdyIn (reverse p.lamVar) in
+  let tlet =
+  match p.ret with Some ret then
+  let accName = match p.acc with Some acc then acc else never in
+   TmLet { ident = ret,
+                                  tyBody = tyunknown_,
+                                  body = foldl_ bdy (nvar_ accName) (nvar_ p.iter),
+                                  inexpr =(recreateVertex vRet g m false plateVertices as),
+                                  ty = tyunknown_,
+                                  info = NoInfo (),
+                                  tyAnnot = tyunknown_}
+
+  else
+  match length p.lamVar with 1 then
+    TmLet { ident = p.ident,
                                   tyBody = tyunknown_,
                                   body = (iter_
-                                    (nulam_ p.lamVar
+                                    (nulam_ (get p.lamVar 0)
                                       (recreateVertex (Some vPRet) g m true plateVertices vItems)) (nvar_ p.iter)),
                                   inexpr =(recreateVertex vRet g m false plateVertices as),
                                   ty = tyunknown_,
                                   info = NoInfo (),
                                   tyAnnot = tyunknown_}
-                                   -- else recreateVertex vRet g m as
+  else
+        TmLet { ident = p.ident,
+                                  tyBody = tyunknown_,
+                                  body = (iteri_ (nulam_ (get p.lamVar 0) (nulam_ (get p.lamVar 1)
+                                      (recreateVertex (Some vPRet) g m true plateVertices vItems))) (nvar_ p.iter)),
+                                  inexpr =(recreateVertex vRet g m false plateVertices as),
+                                  ty = tyunknown_,
+                                  info = NoInfo (),
+                                  tyAnnot = tyunknown_} in
+                               tlet                                   -- else recreateVertex vRet g m as
   | [] -> match vRet with Some (CodeBlockNode c) then c.code else error "no return"
-
+-/
 end
 
 lang PBNTransformer = StaticAnalyzer + ConjugatePrior + Reconstructor end
@@ -637,6 +829,126 @@ let createRParameter =  use PBNTransformer in
         let g = foldl (lam acc. lam gp. digraphMaybeAddEdge gp rho 0 acc) g parentsT in
         let g = foldl (lam acc. lam gp. let g = digraphRemoveEdge gp p 0 acc in digraphMaybeAddEdge gp rho 0 g) g parentsP in
         (rho,updatedD,g,m)
+    else never
+  else never
+
+let createPParameter = use PBNTransformer in
+  lam t:Vertex. lam p:Vertex. lam qDist:Map Name Expr. lam g:Digraph Vertex Label.  lam m:Map Name Vertex. lam index:Option (Expr,Expr).
+  match t with RandomVarNode v1 then
+    match p with RandomVarNode v2 then
+      let pMarginalizedDist = mapLookupOrElse (lam. error "createPParameter:Lookup failed") v2.ident qDist in
+      let idacc = nameSym "acc" in
+      let adaptedDist = changeParams idacc pMarginalizedDist in
+      let accFold = getParams pMarginalizedDist in
+      let cbid = nameSym "accF" in
+      let cb = CodeBlockNode {ident=cbid, code=nulet_ cbid accFold, ret=false,list=false,plateId=None ()} in
+      let g = digraphAddVertex cb g in
+      let m = mapInsert cbid cb m in
+      --let g = digraphAddEdge p cb 1 g in
+      let res = posteriorPredictive v1.plateId (v1.dist,adaptedDist) in
+      let rho = res.0 in
+      let id = match rho with CodeBlockNode r then r.ident else never in
+      
+      -- add that codeblock to the plate
+      let gm =
+          match v1.plateId with Some pid then
+            let v = mapLookupOrElse (lam. error "createPParameter:Lookup failed") pid m in
+            match v with PlateNode p then
+              let vertices = setOfSeq nameCmp (filter (lam e.
+                let e = mapLookupOrElse (lam. error "lookup failed") e m in 
+                match e with CodeBlockNode c then not c.ret else true) (setToSeq p.vertices)) in
+              let pU = PlateNode {{{p with vertices=setInsert id vertices} with lamVar = cons idacc p.lamVar} with acc=Some cbid} in
+              let g = digraphAddUpdateVertex pU g in
+              let g = digraphAddEdge cb pU 1 g in
+              (g, mapInsert pid pU m)
+            else never
+          else (g,m)
+        in
+      let q = res.1 in
+      let g = digraphAddVertex rho gm.0 in
+      -- add the created cb to the id vertex list
+      let m = mapInsert id rho gm.1 in
+      -- get the codeblock parents and stabilized nodes of t
+      let parentsT = filter (lam v. match v with CodeBlockNode _ then true
+                                  else match v with RandomVarNode r then
+                                    eqi r.color 1
+                                  else false) (digraphPredeccessors t g) in
+      -- get the codeblock parents and stabilized nodes of p
+      let parentsP = filter (lam v. match v with CodeBlockNode _ then true
+                                  else match v with RandomVarNode r then
+                                    eqi r.color 1
+                                  else false) (digraphPredeccessors p g) in
+      -- inherit the dependencies
+      let g = foldl (lam acc. lam gp. digraphMaybeAddEdge gp rho 0 acc) g parentsT in
+      let g = foldl (lam acc. lam gp. digraphMaybeAddEdge gp rho 0 acc) g parentsP in
+      let g = digraphAddEdge rho t 0 g in
+      let qDist = mapInsert v1.ident q qDist in
+      -- reorder starts here
+      let obs = match v1.val with Some obs then v1.val else Some (nvar_ v1.ident) in
+      let res = posterior obs index v1.plateId (v1.dist, adaptedDist) in
+      let rho = res.0 in
+      let updatedD = res.1 in
+      let g = digraphAddVertex rho g in
+      -- add the created cb to the id vertex list
+      let id = match rho with CodeBlockNode r then r.ident else never in
+      let idret = nameSym "" in
+      let returnNode = CodeBlockNode {ident=idret, code=nvar_ id, ret=true, list=false,plateId=v1.plateId} in
+      let g = digraphAddVertex returnNode g in
+      let m = mapInsert idret returnNode m in
+      -- add that codeblock to the plate
+      let gm =
+          match v1.plateId with Some pid then
+            let v = mapLookupOrElse (lam. error "createPParameter:Lookup failed") pid m in
+            match v with PlateNode p then
+              let vertices = setInsert idret p.vertices in
+              let pU = PlateNode {p with vertices=setInsert id vertices} in
+              (digraphAddUpdateVertex pU g,mapInsert pid pU m)
+            else never
+          else (g,m)
+        in
+      let g = gm.0 in
+      let m = mapInsert id rho gm.1 in
+      -- inherit parents
+      -- get the codeblock parents and stabilized nodes of t
+      let parentsT = filter (lam v. match v with CodeBlockNode _ then true
+                                  else match v with RandomVarNode r then
+                                    eqi r.color 1
+                                  else false) (digraphPredeccessors t g) in
+        -- get the codeblock parents and stabilized nodes of p
+      let parentsP = filter (lam v. match v with CodeBlockNode _ then true
+                                  else match v with RandomVarNode r then
+                                    eqi r.color 1
+                                  else false) (digraphPredeccessors p g) in
+      -- inherit the dependencies
+      let g = foldl (lam acc. lam gp. digraphMaybeAddEdge gp rho 0 acc) g parentsT in
+      let g = foldl (lam acc. lam gp. let g = digraphRemoveEdge gp p 0 acc in digraphMaybeAddEdge gp rho 0 g) g parentsP in
+      let g = digraphRemoveEdge p t 0 g in
+      let returnId = nameSym "plateReturn" in
+      let stabilizedT = RandomVarNode {{v1 with color=1} with dist=mapLookupOrElse (lam. error "Reorder:Lookup failed") v1.ident qDist} in
+        let gm =
+          match v1.plateId with Some pid then
+            let v = mapLookupOrElse (lam. error "createPParameter:Lookup failed") pid m in
+            match v with PlateNode pn then
+              let pU = PlateNode {pn with ret=Some returnId} in
+              let g = digraphAddUpdateVertex pU g in
+              let g = digraphAddEdge pU p 0 g in
+              (g,mapInsert pid pU m)
+            else never
+          else (g,m)
+        in
+          let g = gm.0 in
+          let m = gm.1 in
+          let qDist = mapRemove v1.ident qDist in
+          let updatedD = changeParams returnId updatedD in
+          let marginalizedP = RandomVarNode {v2 with dist=updatedD} in
+          let m = mapInsert v2.ident marginalizedP m in
+          let g = digraphRemoveEdge p t 0 g in
+          let g = digraphAddUpdateVertex stabilizedT g in
+          let g = digraphAddUpdateVertex marginalizedP g in
+          let g = digraphAddEdge stabilizedT rho 0 g in
+          let m = mapInsert v1.ident stabilizedT m in
+          let qDist = mapInsert v2.ident updatedD qDist in
+      (qDist,g,m)
     else never
   else never
 
@@ -879,45 +1191,7 @@ let prune = use PBNTransformer in
           reorder res.0 res.1 res.2 t))
   else error "Prune: only random variables can be pruned."
 end
-/-
-let orderPlate = use PBNTransformer in
-  lam qDist:Digraph Vertex Label. lam g:Digraph Vertex Label. lam m:Map Name Vertex. lam t:Vertex.
-  match t with RandomVarNode v then
-    match v.plateId with Some pid then
-      if mapMem v.ident qDist then -- t is marginalized
-        -- get its children
-        let children = digraphSuccessors t g in
-        -- get its marginalized random variable child if any
-        let child = filter (lam u. match u with RandomVarNode u then mapMem u.ident qDist else false) children in
-        -- if it does not have a marginalized child, then do nothing and return the graph
-        (if null child then (qDist,g,m)
-        -- if it has more than one marginalized child, then there is something wrong
-        (if not (eqi (length child) 1) then error "Graft: can only have one marginalized child"
-         else -- if it has one marginalized child
-           let child = get child 0 in -- get that child
-          (if debug then print (join ["child node ", (v2str child), " to be pruned\n"]) else ());
-           -- prune the child so t will become the terminal node on its marginalized path
-          prune qDist g m child))
-      else -- t is not marginalized
-        let qDist= res.0 in
-        let g = res.1 in
-        let m = res.2 in
-        let parent = res.3 in
-        match parent with None () then marginalize qDist g m t
-        else
-          match parent with Some parent then
-            match parent with RandomVarNode p then
-              match p.plateId with Some ppid then
-                if nameEq ppid pid then -- in the same plate
-                  let res = graft qDist g m parent in
-                  marginalize res.0 res.1 res.2 t
-                else never -- in a different plate TBD
-              else never -- not in a plate TBD for now
-            else never
-          else never
 
-  else never
--/
 recursive
 let handleMultipleParents = use PBNTransformer in
   lam qDist:Map Name Expr. lam g:Digraph Vertex Label. lam m:Map Name Vertex. lam t: Vertex.
@@ -944,6 +1218,25 @@ let handleMultipleParents = use PBNTransformer in
         else never
       ) (qDist,g,m) (tail parents) in
       (res.0,res.1,res.2,Some parent)
+
+let margReorderPlate = use PBNTransformer in
+  lam qDist:Map Name Expr. lam g:Digraph Vertex Label. lam m:Map Name Vertex. lam t:Vertex.
+  match t with RandomVarNode v then
+    let parent = get (digraphPredeccessors t g) 0 in
+    match parent with RandomVarNode p then
+      -- find the marginalized distribution for the parent
+      let pMarginalizedDist = mapLookupOrElse (lam. error "Marginalize:Lookup failed") p.ident qDist in
+      if isConjugatePrior (v.dist,pMarginalizedDist) then
+        match v.plateId with Some vid then
+          let plate = mapLookupOrElse (lam. error "margReorderPlate:lookup failed.") vid m in
+          match plate with PlateNode pn then
+              print "margReorder:creating param";
+              createPParameter t parent qDist g m (None ())
+          else never
+        else never
+      else never --todo
+    else never
+  else never
 
 let graft = use PBNTransformer in
   lam qDist:Map Name Expr. lam g:Digraph Vertex Label. lam m:Map Name Vertex. lam t:Vertex.
@@ -984,7 +1277,9 @@ let graft = use PBNTransformer in
                   let res = graft qDist g m parent in
                   marginalize res.0 res.1 res.2 t
                 else never -- in a different plate TBD
-              else never -- not in a plate TBD for now
+              else --not in a plate
+                let res = graft qDist g m parent in
+                margReorderPlate res.0 res.1 res.2 t
             else never
           else never
       else
@@ -1054,18 +1349,26 @@ let transformModel = lam g:Digraph Vertex Label. lam targets:[Vertex]. lam m:Map
 let modifyGraph = use StaticAnalyzer in
   lam g:Digraph Vertex Label. lam m:Map Name Vertex.
   let lists = filter (lam v. match v with ListNode _ then true else false) (digraphVertices g) in
-  foldl (lam g. lam l.
+  let g = foldl (lam g. lam l.
           match l with ListNode r then
             foldl (lam g:Digraph Vertex Label. lam id:Name.
                     let i = mapLookupOrElse (lam. error "modify:Lookup failed") id m in
                     let edges = digraphEdgesTo i g in
-                    digraphMaybeAddEdges (map (lam e. (e.0,l,e.2)) edges) g) g r.items else never) g lists
+                    digraphMaybeAddEdges (map (lam e. (e.0,l,e.2)) edges) g) g r.items else never) g lists in
+let plates = filter (lam v. match v with PlateNode _ then true else false) (digraphVertices g) in
+foldl (lam g. lam pl.
+  match pl with PlateNode p then
+    foldl (lam g. lam id. 
+      let i = mapLookupOrElse (lam. error "modify:Lookup failed") id m in
+      let edges = digraphEdgesTo i g in
+      digraphMaybeAddEdges (map (lam e. (e.0,pl,e.2)) edges) g) g (setToSeq p.vertices) else never) g plates
+
 
 let analyze = lam prog.
   use StaticAnalyzer in
   let emptyG = digraphEmpty cmprVertex eqi in
   let emptyM = mapEmpty nameCmp in
-  createPBN emptyG (setEmpty nameCmp) emptyM emptyM emptyM (None ()) (None ()) prog
+  createPBN emptyG (setEmpty nameCmp) emptyM (mapEmpty nameCmp) (mapEmpty nameCmp) (None ()) (None ()) prog
 
 let recreate = lam g:Digraph Vertex Label. lam m:Map Name Vertex.
   use Reconstructor in
@@ -1091,9 +1394,9 @@ let transformM = lam model.
   let m1 = res.2 in
   let m2 = res.3 in
   let env = res.4 in
-  --digraphPrintDot g v2str int2string;
+  digraphPrintDot g v2str int2string;
   --print "\n";
-  iter (lam v. print (v2str v);print "\n" ) (digraphVertices g);
+  --iter (lam v. print (v2str v);print "\n" ) (digraphVertices g);
 
   --digraphPrintVertices g.0 v2str;
   --digraphPrintDot g.0 v2str int2string;
@@ -1115,7 +1418,8 @@ print "\nTRANSFORM\n";
   --print "\n\n";
   --digraphPrintVertices rg v2str;
   print "\nRECREATE\n";
- -- let rProg = recreate g m1 in
+  
+ --let rProg = recreate g m1 in
   let rProg = recreate rg m in-- m in
   rProg
 
