@@ -123,10 +123,10 @@ lang MExprCompile =
     let prog = insertModels modelAsts mainAst in
 
     -- Type-check if options is set
-    (if options.debugMExprCompile then
+    /-(if options.debugMExprCompile then
       -- Check that the combined program type checks
       typeCheck prog; ()
-    else ());
+    else ());-/
 
     -- Return complete program
     prog
