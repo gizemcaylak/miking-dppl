@@ -1,5 +1,5 @@
-include "coreppl.mc"
-include "parser.mc"
+include "../coreppl.mc"
+include "../parser.mc"
 include "name.mc"
 include "mexpr/extract.mc"
 include "mexpr/lamlift.mc"
@@ -82,7 +82,7 @@ lang DPPLExtract = DPPLParser + MExprExtract + MExprLambdaLift
   | ast ->
     let ast = extractAst (setOfSeq nameCmp [inferId]) ast in
     let ast = inlineInferBinding inferId ast in
-    printLn (mexprPPLToString ast);
+    -- printLn (mexprPPLToString ast);
     let ast = removeRedundantRec ast in
     -- NOTE(dlunde,2023-05-22): Call inlineSingleUse twice to further simplify
     -- some cases. We probably want to repeat it until fixpoint. Or, replace
@@ -91,8 +91,9 @@ lang DPPLExtract = DPPLParser + MExprExtract + MExprLambdaLift
     let ast = inlineSingleUse ast in
     let ast = inlineSingleUse ast in
     ---
-    printLn (mexprPPLToString ast);
+    -- printLn (mexprPPLToString ast);
     ast
+
   -- Inlines the body of the infer binding without lambdas. This places the
   -- model code in the top-level of the program.
   sem inlineInferBinding : Name -> Expr -> Expr
@@ -166,6 +167,7 @@ lang DPPLExtract = DPPLParser + MExprExtract + MExprLambdaLift
       else e
     else e
   | t -> smap_Expr_Expr (replaceInferApplication solutions inferData) t
+
   -- Replaces recursive lets with regular lets where possible
   sem removeRedundantRec : Expr -> Expr
   sem removeRedundantRec =
@@ -180,12 +182,14 @@ lang DPPLExtract = DPPLParser + MExprExtract + MExprLambdaLift
       let res = foldr bind_ inexpr bindings in
       withInfo (infoTm t) (withType (tyTm t) res))
   | expr -> smap_Expr_Expr removeRedundantRec expr
+
   sem bindingsUsed : Set Name -> Bool -> Expr -> Bool
   sem bindingsUsed bs acc =
   | TmVar t -> if setMem t.ident bs then true else acc
   | expr ->
     if acc then acc else
       sfold_Expr_Expr (bindingsUsed bs) acc expr
+
   -- Assumes proper symbolization and ANF
   sem inlineSingleUse : Expr -> Expr
   sem inlineSingleUse =
@@ -198,6 +202,7 @@ lang DPPLExtract = DPPLParser + MExprExtract + MExprLambdaLift
     -- Inline functions
     match inlineSingleUseH m (mapEmpty nameCmp) expr with (_,expr) in
     expr
+
   sem determineInline : Map Name Bool -> Expr -> Map Name Bool
   sem determineInline m =
   | TmLet t ->
@@ -215,6 +220,7 @@ lang DPPLExtract = DPPLParser + MExprExtract + MExprLambdaLift
       else mapInsert t.ident true m -- First use
     else m
   | expr -> sfold_Expr_Expr determineInline m expr
+
   sem inlineSingleUseH : Map Name Bool
                          -> Map Name Expr -> Expr -> (Map Name Expr, Expr)
   sem inlineSingleUseH m me =
@@ -250,5 +256,6 @@ lang DPPLExtract = DPPLParser + MExprExtract + MExprLambdaLift
     match mapLookup t.ident me with Some expr then (mapRemove t.ident me, expr)
     else (me, TmVar t)
   | expr -> smapAccumL_Expr_Expr (inlineSingleUseH m) me expr
+
 end
 let extractInfer = use DPPLExtract in extractInfer
