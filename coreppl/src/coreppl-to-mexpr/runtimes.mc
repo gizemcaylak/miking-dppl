@@ -27,9 +27,12 @@ lang LoadRuntime =
     -- The type for which State is an alias for this runtime.
     stateType : Type,
 
+    -- runtimes:[(Name,Type)]
     cRunId: Name,
     counterType : Type,
 
+    dRunId: Name,
+    graphType: Type,
     -- A symbolization environment containing the identifiers defined in the
     -- top-level of the runtime program. This environment is used to symbolize
     -- the model AST so that it refers to definitions in its corresponding
@@ -60,8 +63,8 @@ lang LoadRuntime =
   | PIMH _ -> compilerPIMH options
   | _ -> error "Unsupported CorePPL to MExpr inference method"
 
-  sem loadCounterRuntime: InferMethod -> Name -> Type -> String -> RuntimeEntry
-  sem loadCounterRuntime method runId stateType =
+  sem loadCounterRuntime: InferMethod -> String -> RuntimeEntry
+  sem loadCounterRuntime method =
   | runtime ->
     let parse = use BootParser in parseMCoreFile {
       defaultBootParserParseMCoreFileArg with
@@ -73,10 +76,30 @@ lang LoadRuntime =
     let ids = findNamesOfStrings ["runC","Counter"] runtime in
     match ids with [Some cRunId, Some counterId] in 
     let counterType = findStateType method counterId runtime in
-    let counterEntry = {ast = runtime, runId=runId, stateType=stateType
-    , counterType = counterType, cRunId = cRunId, topSymEnv= addTopNames symEnvEmpty runtime} in
+    let counterEntry = {ast = runtime, runId=nameNoSym "", stateType=tyunknown_
+    , counterType = counterType, cRunId = cRunId
+    , dRunId = nameNoSym "", graphType = tyunknown_
+    , topSymEnv= addTopNames symEnvEmpty runtime} in
     counterEntry
 
+  sem loadDelayedRuntime: InferMethod -> String -> RuntimeEntry
+  sem loadDelayedRuntime method =
+  | runtime ->
+    let parse = use BootParser in parseMCoreFile {
+      defaultBootParserParseMCoreFileArg with
+        eliminateDeadCode = false,
+        allowFree = true }
+    in
+    let runtime = parse (join [corepplSrcLoc, "/coreppl-to-mexpr/", runtime]) in
+    let runtime = symbolizeAllowFree runtime in
+    let ids = findNamesOfStrings ["runD","DelayedGraph_DelayedGraph"] runtime in
+    match ids with [Some dRunId, Some delayedId] in 
+    let graphType = findStateType method delayedId runtime in
+    let delayedEntry = {ast = runtime, runId=nameNoSym "", stateType=tyunknown_
+    , cRunId = nameNoSym "", counterType = tyunknown_
+    , dRunId = dRunId, graphType = graphType
+    , topSymEnv= addTopNames symEnvEmpty runtime} in
+    delayedEntry
 
   sem loadRuntimes : Options -> Expr -> Map InferMethod RuntimeEntry
   sem loadRuntimes options =
@@ -109,11 +132,15 @@ lang LoadRuntime =
     match findRequiredRuntimeIds method runtime with (runId, stateId) in
     let stateType = findStateType method stateId runtime in
     let topSymEnv = addTopNames symEnvEmpty runtime in
-    let cEntry = loadCounterRuntime method runId stateType "counter/runtime.mc" in
+    -- TODO(gizem) load these runtimes only if enabled
+    let cEntry = loadCounterRuntime method "counter/runtime.mc" in
+    let gEntry = loadDelayedRuntime method "delayed-sampling/runtime.mc" in
     let rEntry = { ast = runtime, runId = runId, stateType = stateType
     , counterType = cEntry.counterType, cRunId = cEntry.cRunId
+    , graphType = gEntry.graphType, dRunId = gEntry.dRunId
     , topSymEnv = topSymEnv} in
-    let ast = bind_ cEntry.ast runtime in
+    let runtimeAsts = bindall_ [gEntry.ast,cEntry.ast] in
+    let ast = bind_ runtimeAsts runtime in
     match eliminateDuplicateCodeWithSummary ast with (replacements, ast) in
     {{rEntry with ast = ast} with topSymEnv=addTopNames symEnvEmpty ast}
         

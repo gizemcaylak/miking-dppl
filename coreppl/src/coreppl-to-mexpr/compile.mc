@@ -16,6 +16,7 @@ include "../src-location.mc"
 include "extract.mc"
 include "backcompat.mc"
 include "dists.mc"
+include "delayed-sampling/compile.mc"
 include "runtimes.mc"
 
 lang DPPLKeywordReplace = DPPLParser
@@ -52,14 +53,23 @@ lang DPPLTransformDist = DPPLParser + TransformDist
   | t ->
     let t = mapPre_Expr_Expr transformTmDist t in
     replaceTyDist t
-end
 
+end
+/-
+lang DPPLTransformDsDist = DPPLTransformDist + TransformDsDist
+  sem transformDsDistributions : Map Name EnvParam -> Expr -> Expr
+  sem transformDsDistributions env =
+  | t ->
+    let t = mapPre_Expr_Expr (transformTmDistDs env) t in
+    replaceTyDist t
+end
+-/
 -- NOTE(dlunde,2022-05-04): No way to distinguish between CorePPL and MExpr AST
 -- types here. Optimally, the type would be Options -> CorePPLExpr -> MExprExpr
 -- or similar.
 lang MExprCompile =
   MExprPPL + Resample + Externals + DPPLParser + DPPLExtract + LoadRuntime +
-  Transformation + DPPLKeywordReplace + DPPLTransformDist + MExprSubstitute +
+  Transformation + DPPLKeywordReplace + DPPLTransformDist + MExprSubstitute + DPPLDelayedSampling +
   MExprANFAll + CPPLBackcompat
 
 
@@ -72,6 +82,13 @@ lang MExprCompile =
 
   | t -> smap_Expr_Expr counterTransform t
 
+ /- sem delayedSampling =
+  | prog ->
+    let env = createEnvParam (mapEmpty nameCmp) prog in
+    let prog = replaceWithValue env prog in
+    let transformedP = transformDsDistributions env prog in
+    delayedTransform env transformedP
+  -/
   sem transformModelAst : Options -> Expr -> Expr
   sem transformModelAst options =
   | modelAst ->
@@ -82,6 +99,9 @@ lang MExprCompile =
       else modelAst in
     let ast = if options.counter then
         counterTransform ast
+      else ast in
+    let ast = if options.delayedSampling then
+      delayedSampling ast
       else ast in
     -- Optionally print the model AST
     (if options.printModel then
@@ -124,7 +144,6 @@ lang MExprCompile =
 
     mexprCompile options runtimes ast
 
-
   sem mexprCompile : Options -> Runtimes -> Expr -> Expr
   sem mexprCompile options runtimes =
   | corepplAst ->
@@ -143,7 +162,8 @@ lang MExprCompile =
     let modelAsts = compileModels options runtimes models in
     -- Transform distributions in the CorePPL AST to use MExpr code.
     let corepplAst = transformDistributions corepplAst in
-
+      --printLn "coreppl Ast";
+      --printLn (mexprPPLToString corepplAst);
     -- Symbolize any free occurrences in the CorePPL AST and in any of the
     -- models using the symbolization environment of the runtime AST.
     let runtimeSymEnv = addTopNames symEnvEmpty runtimes.ast in
@@ -267,8 +287,8 @@ lang MExprCompile =
     -- AST.
     let stateVarId = nameNoSym "state" in
     let counterVarId = nameNoSym "counter" in
-    let params = snoc modelParams (counterVarId, entry.counterType) in
-    let params = snoc params (stateVarId, entry.stateType) in
+    let graphVarId = nameNoSym "graph" in
+    let params = foldl (lam params. lam p. snoc params p) modelParams [(graphVarId, entry.graphType),(counterVarId, entry.counterType),(stateVarId, entry.stateType)] in
     let ast =
       nulet_ modelId
         (nlams_ params ast) in

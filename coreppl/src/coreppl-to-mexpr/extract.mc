@@ -195,10 +195,13 @@ lang DPPLExtract =
     in
     match collectAppArgs e with (TmVar {ident = id, info = info}, args) then
       match mapLookup id inferData with Some (method, entry) then
+        let rt1 = appf1_ (nvar_ entry.dRunId) (appSeq_ (nvar_ id) args) in
+        let rt2 = appf1_ (nvar_ entry.cRunId) rt1 in
         appf2_ (nvar_ entry.runId)
         (inferMethodConfig info method) 
+        rt2
         --(appSeq_ (nvar_ id) args)
-         (appf1_ (nvar_ entry.cRunId) (appSeq_ (nvar_ id) args))
+         --(appf1_ (nvar_ entry.cRunId) (appSeq_ (nvar_ id) args))
       else smap_Expr_Expr (replaceInferApplication solutions inferData) e
     else e
   | t -> smap_Expr_Expr (replaceInferApplication solutions inferData) t

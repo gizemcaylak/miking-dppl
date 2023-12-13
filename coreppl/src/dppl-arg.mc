@@ -27,6 +27,9 @@ type Options = {
   -- TODO(2023-06-28,dlunde): Give a more descriptive name, transform is too
   -- generic.
   transform: Bool,
+  -- To enable the runtime delayed sampling
+  delayedSampling: Bool,
+  -- To enable the toy example counting the number of assumes
   counter: Bool,
   -- Where to resample in SMC
   resample: String,
@@ -79,6 +82,7 @@ let default = {
   outputMc = false,
   output = "out",
   transform = false,
+  delayedSampling = false,
   printSamples = true,
   stackSize = 10000,
   cps = "partial",
@@ -157,6 +161,10 @@ let config = [
     "The model is transformed to an efficient representation if possible.",
     lam p: ArgPart Options.
       let o: Options = p.options in {o with transform = true}),
+  ([("--delayed", "", "")],
+    "Enable delayed sampling during runtime.",
+    lam p: ArgPart Options.
+      let o: Options = p.options in {o with delayedSampling = true}),
   ([("--counter", "", "")],
     "The runtime counter example.",
     lam p: ArgPart Options.
