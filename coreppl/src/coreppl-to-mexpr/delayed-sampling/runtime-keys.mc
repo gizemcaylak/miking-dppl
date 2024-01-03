@@ -1,4 +1,4 @@
-include "delayed-graph-mapparents.mc"
+include "delayed-graph-mapadj.mc"
 include "mexpr/ast.mc"
 include "../runtime-dists.mc"
 
@@ -6,10 +6,11 @@ let debug = true
 type Label = Int
 lang DelayedGraph = MExprAst + RuntimeDistElementary
 
+  -- labels could be states on children e.g. (p,c,0) child is init, (p,c,1) child is marg (p,c,2) child is realize, then no need to filter
   sem debugPrint =
   | s -> if debug then print s else ()
 
-  type DelayedGraph = Ref (Digraph Vertex)
+  type DelayedGraph = Ref {g:(Digraph Vertex),keys:Set Int}
   syn Vertex =
   | RandomVarV {ident:Int,
                 dist:all a. DsDist a,
@@ -54,15 +55,16 @@ lang DelayedGraph = MExprAst + RuntimeDistElementary
   sem resetGraph =
   | g ->
     let emptyG = (digraphEmpty cmprVertex) in
-    modref g emptyG
+    modref g {g=emptyG,keys=setEmpty subi}
 
   sem addVertex g =
   | v ->
+    let gk = deref g in
     -- add the vertex to the graph
-    let gg = (digraphAddVertex v (deref g)) in
+    let gg = (digraphAddVertex v (deref g).g) in
     let edges = findDependencies v in
     -- add the dependencies
-    modref g (digraphAddEdges edges gg)
+    modref g {gk with g=(digraphAddEdges edges gg)}
 
   sem findDependencies =
   | (RandomVarV v) & t ->
@@ -76,13 +78,29 @@ lang DelayedGraph = MExprAst + RuntimeDistElementary
   sem getMargDist =
   | RandomVarV t -> match deref t.margDist with Some mDist in mDist
 
+
+  sem generateUniqueKey count =
+  | keys ->
+    let keyG = (sym2hash (gensym ())) in
+    let maxL = (maxi (setSize keys) 1) in
+    let key = (setSize keys) in --modi keyG maxL  in
+   -- if eqi count 10 then  else
+   -- let key = addi (sym2hash (gensym ())) (randIntU (negi maxL) maxL) in
+    if setMem key keys then error (join [(int2string keyG)," mod ", int2string maxL]) else key
+
   sem createVertex g =
   | d ->
-    RandomVarV {ident=digraphCountVertices (deref g),state=ref 0, dist=unsafeCoerce d,value=unsafeCoerce (ref (None ())),margDist=unsafeCoerce (ref (None ()))}
+    let gk = deref g in
+    let key = generateUniqueKey 0 gk.keys in
+    modref g {gk with keys=setInsert key gk.keys};
+    RandomVarV {ident=key,state=ref 0, dist=unsafeCoerce d,value=unsafeCoerce (ref (None ())),margDist=unsafeCoerce (ref (None ()))}
 
   sem createObsVertex g d =
   | value ->
-    RandomVarV {ident=digraphCountVertices (deref g),state=ref 0, dist=unsafeCoerce d,value=unsafeCoerce (ref (Some value)),margDist=unsafeCoerce (ref (None ()))}
+    let gk = deref g in
+    let key = generateUniqueKey 0 gk.keys in
+    modref g {gk with keys=setInsert key gk.keys};
+    RandomVarV {ident=key,state=ref 0, dist=unsafeCoerce d,value=unsafeCoerce (ref (Some value)),margDist=unsafeCoerce (ref (None ()))}
 
   sem getParams =
   | DsDistBernoulli d -> [d.p]
@@ -122,7 +140,7 @@ lang DelayedGraph = MExprAst + RuntimeDistElementary
 
   sem printGraph: DelayedGraph -> ()
   sem printGraph =
-  | g -> print "\nPrint graph:";iter (lam v. print (v2str v)) (digraphVertices (deref g));print "\n";digraphPrintDot (deref g) v2str int2string
+  | g -> print "\nPrint graph:";iter (lam v. print (v2str v)) (digraphVertices (deref g)).g; print "\n";digraphPrintDot (deref g).g v2str int2string
 end
 
 lang DelayedSampling = DelayedGraph
@@ -136,52 +154,55 @@ lang DelayedSampling = DelayedGraph
   sem value: all a. (Dist a -> a) -> DelayedGraph -> Param -> a
   sem value sampleT g =
   | RandomParam v ->
-    valueDs sampleT g v;
+    let v = valueDs sampleT g v in
     getValue v
   | FloatParam v -> unsafeCoerce v
   | IntParam v -> unsafeCoerce v
   | SeqFParam v -> unsafeCoerce v
 
   -- graft(v) -> sample(v)
-  sem valueDs: all a. (Dist a -> a) -> DelayedGraph -> Vertex -> ()
+  sem valueDs: all a. (Dist a -> a) -> DelayedGraph -> Vertex -> Vertex
   sem valueDs sampleT g =
   | (RandomVarV v) & t ->
-      if eqi (deref v.state) 2 then () else
-      graft sampleT g t;
-      sampleDs sampleT g t
+      if eqi (deref v.state) 2 then t else
+      let v = graft sampleT g t in
+      sampleDs sampleT g v
 
-  sem sampleDs: all a. (Dist a -> a) -> DelayedGraph -> Vertex -> ()
+  sem sampleDs: all a. (Dist a -> a) -> DelayedGraph -> Vertex -> Vertex
   sem sampleDs sampleT g =
   | (RandomVarV n)&t  ->
     --debugPrint (join ["sampling: ", (v2str t),"\n"]);
-    let nisObserved = match deref n.value with Some _ then false else true in
-    (if nisObserved then
-      match deref n.margDist with Some margDist in
-      let sampledV = sampleT (transformDsDist sampleT g margDist) in
-      modref n.value (unsafeCoerce (Some sampledV)) else ());
-    realize sampleT  g t
+    let isObserved = match deref n.value with Some _ then true else false in
+    let v =
+      if isObserved then t
+      else
+        match deref n.margDist with Some margDist in
+        let sampledV = sampleT (transformDsDist sampleT g margDist) in
+        modref n.value (unsafeCoerce (Some sampledV));t
+    in
+    realize sampleT  g v
 
   sem isTerminal g =
   | (RandomVarV v) & t ->
     if eqi (deref v.state) 1 then
-      (let children = digraphSuccessors t (deref g) (lam u. match u with RandomVarV u in eqi (deref u.state) 1) in
+      (let children = digraphSuccessors t (deref g).g (lam u. match u with RandomVarV u in eqi (deref u.state) 1) in
       (if null children then true else false))
     else false
 
-  sem graft:  all a. (Dist a -> a) -> DelayedGraph -> Vertex -> ()
+  sem graft:  all a. (Dist a -> a) -> DelayedGraph -> Vertex -> Vertex
   sem graft sampleT g =
   | (RandomVarV v)&t ->
     --debugPrint (join ["grafting: ", (v2str t),"\n"]);
     if eqi (deref v.state) 1 then -- if v is marginalized
-      (let children = (digraphSuccessors t (deref g) (lam u. match u with RandomVarV u in eqi (deref u.state) 1)) in
-      if null children then ()
+      (let children = (digraphSuccessors t (deref g).g (lam u. match u with RandomVarV u in eqi (deref u.state) 1)) in
+      if null children then t
       else -- if it has a marginalized child, prune the child
         let child = get children 0 in
         --debugPrint (join ["has marg child: ", (v2str child),"\n"]);
         prune sampleT g child)
     else -- if v is not marginalized
       --print "it is not marginalized\n";
-      let parents = (digraphPredeccessors t (deref g)) in
+      let parents = (digraphPredeccessors t (deref g).g) in
       if null parents then marginalize sampleT g t -- if no parents, directly marginalize
       else
         -- if has many parent sample the others
@@ -191,12 +212,12 @@ lang DelayedSampling = DelayedGraph
         graft sampleT g parent;
         marginalize sampleT g t
 
-  sem prune: all a. (Dist a -> a) -> DelayedGraph -> Vertex -> ()
+  sem prune: all a. (Dist a -> a) -> DelayedGraph -> Vertex -> Vertex
   sem prune sampleT g =
   | (RandomVarV v)&t ->
     --debugPrint (join ["pruning: ", (v2str t),"\n"]);
     --if neqi (deref v.state) 1 then error "Prune: rv should be marginalized" else
-    let children = (digraphSuccessors t (deref g) (lam u. match u with RandomVarV u in eqi (deref u.state) 1)) in
+    let children = (digraphSuccessors t (deref g).g (lam u. match u with RandomVarV u in eqi (deref u.state) 1)) in
    -- (if gti (length children) 1 then error "Cannot have more than one marginalized child"
    -- else -- if it has a marginalized child, prune the child
       let child = get children 0 in
@@ -261,15 +282,16 @@ lang DelayedSampling = DelayedGraph
     Some (DsDistGamma {shape = FloatParam pSh, scale = FloatParam pSc})
   | _ -> None () --neverr
 
-  sem realize: all a. (Dist a -> a) -> DelayedGraph -> Vertex -> ()
+  sem realize: all a. (Dist a -> a) -> DelayedGraph -> Vertex -> Vertex
   sem realize sampleT g =
   | (RandomVarV v)&t ->
     --debugPrint (join ["realizing: ", (v2str t),"\n"]);
-    let parents = (digraphPredeccessors t (deref g)) in
+    let gk = deref g in
+    let parents = (digraphPredeccessors t gk.g) in
     modref v.state 2;
-    let v = (if null parents then t
+    let v = (if null parents then
     --debugPrint (join ["with noparent: ","\n"]);
-      else
+      t else
      --if gti (length parents) 1 then error "too many parents" else
       let parent = get parents 0 in
       --debugPrint (join ["with parent: ", (v2str parent),"\n"]);
@@ -277,23 +299,23 @@ lang DelayedSampling = DelayedGraph
       match deref p.margDist with Some mDist in
       let ppDist = posterior (getValue t) (mDist, v.dist) in
       modref p.margDist (unsafeCoerce ppDist);
-      modref g (digraphRemoveEdge parent t (deref g));t) in
-    let gg = (deref g) in
+      modref g {gk with g=(digraphRemoveEdge parent t gk.g)};t) in
+    let gg = (deref g).g in
     let children = digraphSuccessors v gg (lam. true) in
     let gg = foldl (lam acc. lam u.
-      marginalize (sampleT) g u;
+      let u = marginalize (sampleT) g u in
       (digraphRemoveEdge v u acc)) gg children in
-    modref g gg
+    modref g {gk with g=gg};v
 
-  sem marginalize: all a. (Dist a -> a) -> DelayedGraph -> Vertex -> ()
+  sem marginalize: all a. (Dist a -> a) -> DelayedGraph -> Vertex -> Vertex
   sem marginalize sampleT g =
   | (RandomVarV v)&t ->
    --debugPrint (join ["marginalizing: ", (v2str t),"\n"]);
-    let parents = filter (lam p. isTerminal g p) (digraphPredeccessors t (deref g)) in
+    let parents = filter (lam p. isTerminal g p) (digraphPredeccessors t (deref g).g) in
       if null parents then
         --debugPrint (join ["with noparent: ","\n"]);
         modref v.state 1;
-        modref v.margDist (unsafeCoerce (Some v.dist))
+        modref v.margDist (unsafeCoerce (Some v.dist));t
       else
         let parent = get parents 0 in
         match parent with RandomVarV p in
@@ -303,10 +325,7 @@ lang DelayedSampling = DelayedGraph
           valueDs sampleT g parent;Some v.dist
           else mDist in
         modref v.state 1;
-        modref v.margDist (unsafeCoerce mDist)
-
-  sem getTDist sampleT g =
-  | dist -> transformDsDist sampleT g dist
+        modref v.margDist (unsafeCoerce mDist);t
 
   sem transformDsDist sampleT g =
   | DsDistBernoulli t -> DistBernoulli {p = value (unsafeCoerce sampleT) g t.p}
@@ -322,10 +341,6 @@ lang DelayedSampling = DelayedGraph
   | _ -> error "not supported currently."
 
 end
-
-let getTDist = lam a. lam g. lam d.
-  use DelayedSampling in
-  getTDist a g d
 
 let marginalize = lam a. lam g. lam t.
   use DelayedSampling in
@@ -417,11 +432,15 @@ let printGraph = lam g.
 
 let runSequential = lam model.
   use DelayedSampling in
-  let emptyR = ref (digraphEmpty cmprVertex) in
+ --let emptyG = ref (digraphEmpty cmprVertex) in
+  --let emptyM = ref (mapEmpty nameCmp) in
+  let emptyR = ref {g=(digraphEmpty cmprVertex),keys=setEmpty subi} in
   model emptyR
 
 let runParallel = lam model.
   use DelayedSampling in
   (lam c. lam s.
-  let emptyR = ref (digraphEmpty cmprVertex) in
+    --let emptyM = ref (mapEmpty nameCmp) in
+  --let emptyG = ref (digraphEmpty cmprVertex) in
+  let emptyR = ref {g=(digraphEmpty cmprVertex),keys=setEmpty subi} in
    model emptyR c s)

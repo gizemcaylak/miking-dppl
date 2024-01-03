@@ -73,7 +73,10 @@ lang LoadRuntime =
     in
     let runtime = parse (join [corepplSrcLoc, "/coreppl-to-mexpr/", runtime]) in
     let runtime = symbolizeAllowFree runtime in
-    let ids = findNamesOfStrings ["runC","Counter"] runtime in
+    let runMethodName =
+      match method with Importance _ then
+        "runParallel" else "runSequential" in
+    let ids = findNamesOfStrings [runMethodName,"Counter"] runtime in
     match ids with [Some cRunId, Some counterId] in 
     let counterType = findStateType method counterId runtime in
     let counterEntry = {ast = runtime, runId=nameNoSym "", stateType=tyunknown_
@@ -92,8 +95,12 @@ lang LoadRuntime =
     in
     let runtime = parse (join [corepplSrcLoc, "/coreppl-to-mexpr/", runtime]) in
     let runtime = symbolizeAllowFree runtime in
-    let ids = findNamesOfStrings ["runD","DelayedGraph_DelayedGraph"] runtime in
-    match ids with [Some dRunId, Some delayedId] in 
+    let runMethodName =
+      match method with Importance _ then
+        "runParallel" else "runSequential" in
+    let runStrings = [runMethodName,"DelayedGraph_DelayedGraph"] in
+    let ids = findNamesOfStrings runStrings runtime in
+    match ids with [Some dRunId, Some delayedId] in
     let graphType = findStateType method delayedId runtime in
     let delayedEntry = {ast = runtime, runId=nameNoSym "", stateType=tyunknown_
     , cRunId = nameNoSym "", counterType = tyunknown_

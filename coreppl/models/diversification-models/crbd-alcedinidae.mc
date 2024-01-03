@@ -1,7 +1,7 @@
 include "tree-alcedinidae.mc"
 include "crbd.mc"
 
-let model: () -> Float = lam.
+let model: () -> () = lam.
   crbd tree rho
 
 mexpr

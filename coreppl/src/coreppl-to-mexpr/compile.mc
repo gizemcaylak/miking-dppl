@@ -55,15 +55,7 @@ lang DPPLTransformDist = DPPLParser + TransformDist
     replaceTyDist t
 
 end
-/-
-lang DPPLTransformDsDist = DPPLTransformDist + TransformDsDist
-  sem transformDsDistributions : Map Name EnvParam -> Expr -> Expr
-  sem transformDsDistributions env =
-  | t ->
-    let t = mapPre_Expr_Expr (transformTmDistDs env) t in
-    replaceTyDist t
-end
--/
+
 -- NOTE(dlunde,2022-05-04): No way to distinguish between CorePPL and MExpr AST
 -- types here. Optimally, the type would be Options -> CorePPLExpr -> MExprExpr
 -- or similar.
@@ -75,20 +67,32 @@ lang MExprCompile =
 
   sem counterTransform =
   | TmLet ({body = TmAssume _} &t) -> let i = withInfo t.info in
-    let code = ulet_ "" (appf1_ (var_ "incrementCounter") (var_ "counter")) in
-    let code2 = ulet_ "" (appf1_ (var_ "printCounter") (var_ "counter")) in
-    let code = bind_ code code2 in
+    let xName = nameSym "x" in
+    let xVar = nvar_ xName in
+    let x = nulet_ xName (ulam_ "" (var_ "incrementCounter")) in
+    let code = ulet_ "" (appf2_ xVar unit_ (var_ "counter")) in
+    let yName = nameSym "y" in
+    let yVar = nvar_ yName in
+    let y = nulet_ yName (ulam_ "" (var_ "printCounter")) in
+    let code2 = ulet_ "" (appf2_ yVar unit_ (var_ "counter")) in
+    let code = bindall_ [x,code,y,code2] in
     bind_ code (TmLet {t with inexpr=counterTransform t.inexpr})
 
   | t -> smap_Expr_Expr counterTransform t
 
- /- sem delayedSampling =
-  | prog ->
-    let env = createEnvParam (mapEmpty nameCmp) prog in
-    let prog = replaceWithValue env prog in
-    let transformedP = transformDsDistributions env prog in
-    delayedTransform env transformedP
-  -/
+  sem resetCounter =
+  | TmLet ({inexpr=inexpr}&t)  -> TmLet {t with inexpr=resetCounter inexpr}
+  | TmRecLets  ({inexpr=inexpr}&t)  -> TmRecLets {t with inexpr=resetCounter inexpr}
+  | TmExt ({inexpr=inexpr}&t) -> TmExt {t with inexpr=resetCounter inexpr}
+  | TmType ({inexpr=inexpr}&t) -> TmType {t with inexpr=resetCounter inexpr}
+  | TmConDef ({inexpr=inexpr}&t) -> TmConDef {t with inexpr=resetCounter inexpr}
+  | t ->
+    let xName = nameSym "x" in
+    let xVar = nvar_ xName in
+    let x = nulet_ xName (ulam_ "" (var_ "resetCounter")) in
+    let code = ulet_ "" (appf2_ xVar unit_ (var_ "counter")) in
+    bindall_ [x,code, t]
+
   sem transformModelAst : Options -> Expr -> Expr
   sem transformModelAst options =
   | modelAst ->
@@ -98,7 +102,8 @@ lang MExprCompile =
         transform modelAst
       else modelAst in
     let ast = if options.counter then
-        counterTransform ast
+        let ast = counterTransform ast in
+        resetCounter ast
       else ast in
     let ast = if options.delayedSampling then
       delayedSampling ast

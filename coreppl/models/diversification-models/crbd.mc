@@ -1,13 +1,14 @@
 include "phylo.mc"
 include "math.mc"
 
-let crbd: Tree -> Float -> Float = lam tree. lam rho.
+let crbd: Tree -> Float -> () = lam tree. lam rho.
 
   -- Priors
-  let lambda = assume (Gamma 1.0 1.0) in
-  let mu = assume (Gamma 1.0 0.5) in
+ 
 
   recursive let survives = lam tBeg.
+ let lambda = assume (Gamma 1.0 1.0) in
+  let mu = assume (Gamma 1.0 0.5) in
     let t = subf tBeg (assume (Exponential (addf lambda mu))) in
     if ltf t 0. then
       assume (Bernoulli rho)
@@ -22,6 +23,9 @@ let crbd: Tree -> Float -> Float = lam tree. lam rho.
   in
 
   recursive let simHiddenSpeciation = lam nodeAge. lam tBeg.
+let lambda = assume (Gamma 1.0 1.0) in
+  let mu = assume (Gamma 1.0 0.5) in
+
     let t = subf tBeg (assume (Exponential lambda)) in
     if gtf t nodeAge then
       if survives t then
@@ -37,6 +41,9 @@ let crbd: Tree -> Float -> Float = lam tree. lam rho.
   in
 
   recursive let walk = lam node. lam parentAge.
+    let lambda = assume (Gamma 1.0 1.0) in
+    let mu = assume (Gamma 1.0 0.5) in
+
     let nodeAge = getAge node in
     simHiddenSpeciation nodeAge parentAge;
     let w3 = observe 0 (Poisson (mulf mu (subf parentAge nodeAge))) in
@@ -54,6 +61,6 @@ let crbd: Tree -> Float -> Float = lam tree. lam rho.
   weight (subf (mulf (subf (int2float numLeaves) 1.) (log 2.)) (logFactorial numLeaves));
   match tree with Node root in
   walk root.left root.age;
-  walk root.right root.age;
-  lambda
+  walk root.right root.age;()
+  --lambda
 

@@ -1,7 +1,8 @@
 include "tree-synthetic.mc"
 include "crbd.mc"
+include "digraph.mc"
 
-let model: () -> Float = lam.
+let model: () -> () = lam.
   crbd tree rho
 
 mexpr
