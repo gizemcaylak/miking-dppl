@@ -186,7 +186,7 @@ lang DelayedSampling = DelayedGraph
       else
         -- if has many parent sample the others
         --print "has parent need to graft them first\n";
-        iter (lam p. valueDs sampleT g p;()) (tail parents);
+        iter (lam p. valueDs sampleT g p) (tail parents);
         let parent = get parents 0 in
         graft sampleT g parent;
         marginalize sampleT g t
@@ -205,6 +205,7 @@ lang DelayedSampling = DelayedGraph
 
   sem unwrap:all a. Param -> a
   sem unwrap =
+  | RandomParam r -> unsafeCoerce (getValue r)
   | FloatParam f -> unsafeCoerce f
   | IntParam i -> unsafeCoerce i
   | SeqFParam s -> unsafeCoerce s
