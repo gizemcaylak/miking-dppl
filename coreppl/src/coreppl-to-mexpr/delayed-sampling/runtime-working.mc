@@ -1,10 +1,13 @@
-include "delayed-graph-mapadj.mc"
+include "delayed-graph-mapparents.mc"
 include "mexpr/ast.mc"
 include "../runtime-dists.mc"
 
 --let debug = false
 lang DelayedGraph = MExprAst + RuntimeDistElementary
 
+ /- sem debugPrint =
+  | s -> if debug then print s else ()
+-/
   type DelayedGraph = Ref (Digraph Vertex)
   syn Vertex =
   | RandomVarV {ident:Int,
@@ -12,7 +15,6 @@ lang DelayedGraph = MExprAst + RuntimeDistElementary
                 margDist:all a. Ref (Option (DsDist a)),
                 value:all a. Ref (Option a),
                 state:Ref Int,
-                next:Ref (Option Vertex),
                 terminal:Ref Bool}
                 -- 0: initialized
                 -- 1: marginalized
@@ -24,13 +26,12 @@ lang DelayedGraph = MExprAst + RuntimeDistElementary
   | IntParam Int
   | SeqFParam [Float]
   | RandomParam Vertex
-  | AffineParam {aV: Param, meanScale : Float, meanOffset: Float}
 
   -- delayed distributions where parameters are not sampled directly
   syn DsDist a =
   | DsDistBernoulli {p : Param}
   | DsDistBeta  {a : Param, b : Param}
-  | DsDistGaussian {mu : Param, sigma : Param, meanScale : Float, meanOffset : Float}
+  | DsDistGaussian {mu : Param, sigma : Param}
   | DsDistMultinomial {n : Param, p : Param}
   | DsDistDirichlet {a: Param}
   | DsDistCategorical {p : Param}
@@ -41,19 +42,6 @@ lang DelayedGraph = MExprAst + RuntimeDistElementary
   | DsDistExponential {rate : Param}
   | DsDistLomax {scale : Param, shape : Param}
 
-  sem getParents =
-  | DsDistBernoulli {p=RandomParam v} -> [v]
-  | DsDistBeta _ -> []
-  | DsDistGaussian ({mu=RandomParam v}&t) -> [v]
-  | DsDistCategorical {p=RandomParam v} -> [v]
-  | DsDistPoisson {lambda=RandomParam v} -> [v]
-  | DsDistBinomial {n=_,p=RandomParam v} -> [v]
-  | DsDistUniform _ -> []
-  | DsDistGamma _ -> []
-  | DsDistExponential {rate=RandomParam v} -> [v]
-  | DsDistLomax _ -> []
-  | _ -> []
-
   sem cmprVertex: Vertex -> Vertex -> Int
   sem cmprVertex v1 =
   | v2 -> cmprVertexH (v1,v2)
@@ -61,24 +49,55 @@ lang DelayedGraph = MExprAst + RuntimeDistElementary
   sem cmprVertexH: (Vertex,Vertex) -> Int
   sem cmprVertexH =
   | (RandomVarV v1, RandomVarV v2) ->  (subi v1.ident v2.ident)
-  
+
   -- clear the graph
   sem resetGraph =
   | g ->
     let emptyG = (digraphEmpty cmprVertex) in
     modref g emptyG
 
+  sem addVertex g =
+  | v ->
+    -- add the vertex to the graph
+    let gg = (digraphAddVertex v (deref g)) in
+    let edges = findDependencies v in
+    -- add the dependencies
+    modref g (digraphAddEdges edges gg)
+
+  sem findDependencies =
+  | (RandomVarV v) & t ->
+    foldl (lam edges. lam p.
+      match p with RandomParam f then
+        match f with RandomVarV p in
+        (if neqi (deref p.state) 2 then -- if the parent is already realized no need to add an edge
+          cons (f,t) edges else edges)
+      else edges) [] (getParams v.dist)
+
   sem getMargDist =
   | RandomVarV t -> match deref t.margDist with Some mDist in mDist
 
   sem createVertex g =
   | d ->
-    RandomVarV {ident=digraphCountVertices (deref g),state=ref 0, dist=unsafeCoerce d,value=unsafeCoerce (ref (None ())),margDist=unsafeCoerce (ref (None ())),terminal=ref false,next=ref (None ())}
+    RandomVarV {ident=digraphCountVertices (deref g),state=ref 0, dist=unsafeCoerce d,value=unsafeCoerce (ref (None ())),margDist=unsafeCoerce (ref (None ())),terminal=ref false}
 
   sem createObsVertex g d =
   | value ->
-    RandomVarV {ident=digraphCountVertices (deref g),state=ref 0, dist=unsafeCoerce d,value=unsafeCoerce (ref (Some value)),margDist=unsafeCoerce (ref (None ())),terminal=ref false,next=ref (None ())}
+    RandomVarV {ident=digraphCountVertices (deref g),state=ref 0, dist=unsafeCoerce d,value=unsafeCoerce (ref (Some value)),margDist=unsafeCoerce (ref (None ())),terminal=ref false}
 
+  sem getParams =
+  | DsDistBernoulli d -> [d.p]
+  | DsDistBeta d -> [d.a,d.b]
+  | DsDistGaussian d -> [d.mu, d.sigma]
+  | DsDistCategorical d -> [d.p]
+  | DsDistPoisson d -> [d.lambda]
+  | DsDistBinomial d -> [d.n,d.p]
+  | DsDistUniform d -> [d.a,d.b]
+  | DsDistGamma d -> [d.shape,d.scale]
+  | DsDistExponential d -> [d.rate]
+  | DsDistLomax d -> [d.scale, d.shape]
+  | DsDistDirichlet d -> [d.a]
+  | DsDistMultinomial d -> [d.n, d.p]
+  | _ -> error "getParams: distribution is not supported"
 
   sem d2str =
   | DsDistBernoulli d -> "DsDistBernoulli"
@@ -119,8 +138,6 @@ lang DelayedSampling = DelayedGraph
   | RandomParam v ->
     valueDs sampleT g v;
     getValue v
-  | AffineParam v ->
-    unsafeCoerce (addf (mulf (unsafeCoerce (value sampleT g v.aV)) v.meanScale) v.meanOffset)
   | FloatParam v -> unsafeCoerce v
   | IntParam v -> unsafeCoerce v
   | SeqFParam v -> unsafeCoerce v
@@ -144,22 +161,31 @@ lang DelayedSampling = DelayedGraph
     realize sampleT  g t
 
   sem isTerminal g =
-  | (RandomVarV v) & t ->
-    if eqi (deref v.state) 1 then deref v.terminal else false
+  | (RandomVarV v) & t -> 
+    if eqi (deref v.state) 1 then deref v.terminal
+    /-  (let children = digraphSuccessors t (deref g) (lam u. match u with RandomVarV u in eqi (deref u.state) 1) in
+      (if null children then true else false))-/
+    else false
 
   sem graft:  all a. (Dist a -> a) -> DelayedGraph -> Vertex -> ()
   sem graft sampleT g =
   | (RandomVarV v)&t ->
     --debugPrint (join ["grafting: ", (v2str t),"\n"]);
     (if eqi (deref v.state) 1 then -- if v is marginalized
-      (let child = deref v.next in
-      match child with Some child then -- if it has a marginalized child, prune the child
-        prune sampleT g child
-      else ())
+      (let children = (digraphSuccessors t (deref g) (lam u. match u with RandomVarV u in eqi (deref u.state) 1)) in
+      if null children then ()
+      else -- if it has a marginalized child, prune the child
+        let child = get children 0 in
+        --debugPrint (join ["has marg child: ", (v2str child),"\n"]);
+        prune sampleT g child)
     else -- if v is not marginalized
-      let parents = getParents v.dist in
+      --print "it is not marginalized\n";
+      let parents = (digraphPredeccessors t (deref g)) in
       if null parents then marginalize sampleT g t -- if no parents, directly marginalize
       else
+        -- if has many parent sample the others
+        --print "has parent need to graft them first\n";
+        iter (lam p. valueDs sampleT g p) (tail parents);
         let parent = get parents 0 in
         graft sampleT g parent;
         marginalize sampleT g t);
@@ -169,11 +195,14 @@ lang DelayedSampling = DelayedGraph
   sem prune: all a. (Dist a -> a) -> DelayedGraph -> Vertex -> ()
   sem prune sampleT g =
   | (RandomVarV v)&t ->
-      let child = deref v.next in
-      (match child with Some child then
-        prune sampleT g child
-      else ());
-      sampleDs sampleT g t
+    --debugPrint (join ["pruning: ", (v2str t),"\n"]);
+    --if neqi (deref v.state) 1 then error "Prune: rv should be marginalized" else
+    let children = (digraphSuccessors t (deref g) (lam u. match u with RandomVarV u in eqi (deref u.state) 1)) in
+   -- (if gti (length children) 1 then error "Cannot have more than one marginalized child"
+   -- else -- if it has a marginalized child, prune the child
+      let child = get children 0 in
+      prune sampleT g child;
+    sampleDs sampleT g t
 
   sem unwrap:all a. Param -> a
   sem unwrap =
@@ -224,7 +253,7 @@ lang DelayedSampling = DelayedGraph
     let muLHS = divf 1. (addf (divf 1. s02) (divf 1. s2)) in
     let pMu = mulf muRHS muLHS in
     let pSigma = externalSqrt (divf 1. (addf (divf 1. s02) (divf 1. s2))) in
-    Some (DsDistGaussian {mu=FloatParam pMu, sigma= FloatParam pSigma, meanScale=, meanOffset=})
+    Some (DsDistGaussian {mu=FloatParam pMu, sigma= FloatParam pSigma})
   | (DsDistGamma p, DsDistExponential l) ->
     let shape = unwrap p.shape in
     let scale = unwrap p.scale in
@@ -238,11 +267,11 @@ lang DelayedSampling = DelayedGraph
   sem realize sampleT g =
   | (RandomVarV v)&t ->
     --debugPrint (join ["realizing: ", (v2str t),"\n"]);
-    let parents = getParents v.dist in
-    --(digraphPredeccessors t (deref g)) in
+    let parents = (digraphPredeccessors t (deref g)) in
     modref v.state 2;
-    if null parents then ()
-    else
+    let v = (if null parents then t
+    --debugPrint (join ["with noparent: ","\n"]);
+      else
      --if gti (length parents) 1 then error "too many parents" else
       let parent = get parents 0 in
       --debugPrint (join ["with parent: ", (v2str parent),"\n"]);
@@ -250,14 +279,19 @@ lang DelayedSampling = DelayedGraph
       match deref p.margDist with Some mDist in
       let ppDist = posterior (getValue t) (mDist, v.dist) in
       modref p.margDist ppDist;
-      modref p.next (None ())
+      modref g (digraphRemoveEdge parent t (deref g));t) in
+    let gg = (deref g) in
+    let children = digraphSuccessors v gg (lam. true) in
+    let gg = foldl (lam acc. lam u.
+      marginalize (sampleT) g u;
+      (digraphRemoveEdge v u acc)) gg children in
+    modref g gg
 
   sem marginalize: all a. (Dist a -> a) -> DelayedGraph -> Vertex -> ()
   sem marginalize sampleT g =
   | (RandomVarV v)&t ->
    --debugPrint (join ["marginalizing: ", (v2str t),"\n"]);
-    let parents = filter (lam p. isTerminal g p) (getParents v.dist) in
-    --(digraphPredeccessors t (deref g)) in
+    let parents = filter (lam p. isTerminal g p) (digraphPredeccessors t (deref g)) in
       if null parents then
         --debugPrint (join ["with noparent: ","\n"]);
         modref v.state 1;
@@ -272,14 +306,12 @@ lang DelayedSampling = DelayedGraph
           valueDs sampleT g parent;Some v.dist
           else mDist in
         modref v.state 1;
-        modref v.margDist mDist;
-        modref p.next (Some t)
+        modref v.margDist mDist
 
-  -- TODO add the scale factors for Gaussian
   sem transformDsDist sampleT g =
   | DsDistBernoulli t -> DistBernoulli {p = value (unsafeCoerce sampleT) g t.p}
   | DsDistBeta t -> DistBeta {a = value (unsafeCoerce sampleT) g t.a, b = value (unsafeCoerce sampleT)  g t.b}
-  | DsDistGaussian t -> DistGaussian {mu = addf t.meanOffset (value (unsafeCoerce sampleT) g t.mu), sigma = value (unsafeCoerce sampleT)  g t.sigma}
+  | DsDistGaussian t -> DistGaussian {mu = value (unsafeCoerce sampleT) g t.mu, sigma = value (unsafeCoerce sampleT)  g t.sigma}
   | DsDistCategorical t -> DistCategorical { p = value (unsafeCoerce sampleT) g t.p}
   | DsDistPoisson t -> DistPoisson {lambda = value (unsafeCoerce sampleT)  g t.lambda}
   | DsDistBinomial t -> DistBinomial {n = value (unsafeCoerce sampleT) g t.n, p = value (unsafeCoerce sampleT) g t.p}
@@ -335,6 +367,14 @@ let v2str = lam v.
   use DelayedSampling in
   v2str v
 
+let getParams = lam d.
+  use DelayedSampling in
+  getParams d
+
+let findDependencies = lam v.
+  use DelayedSampling in
+  findDependencies v
+
 let getValue = lam v.
   use DelayedSampling in
   getValue v
@@ -362,6 +402,10 @@ let createVertex = lam g. lam d.
 let createObsVertex = lam g. lam d. lam o.
   use DelayedSampling in
   createObsVertex g d o
+
+let addVertex = lam g. lam v.
+  use DelayedSampling in
+  addVertex g v
 
 let printGraph = lam g.
   use DelayedSampling in

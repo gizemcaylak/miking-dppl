@@ -61,7 +61,7 @@ end
 -- or similar.
 lang MExprCompile =
   MExprPPL + Resample + Externals + DPPLParser + DPPLExtract + LoadRuntime +
-  Transformation + DPPLKeywordReplace + DPPLTransformDist + MExprSubstitute + DPPLDelayedSampling +
+  DPPLKeywordReplace + DPPLTransformDist + MExprSubstitute + DPPLDelayedSampling +
   MExprANFAll + CPPLBackcompat
 
 
@@ -99,6 +99,7 @@ lang MExprCompile =
     -- Transform the model AST, if the flag is set
     let ast =
       if options.transform then
+        use Transformation in
         transform modelAst
       else modelAst in
     let ast = if options.counter then

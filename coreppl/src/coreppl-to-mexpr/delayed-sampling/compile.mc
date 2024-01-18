@@ -14,6 +14,9 @@ lang MExprPPLDsANF = MExprPPL + MExprANFAll
                                with dist = TmDist { td with dist = dist}}))
           dist)
       value
+  | TmApp ({lhs=TmApp ({lhs=TmConst ({val=CAddf ()}&c),rhs=v1}&a2),rhs=v2}&a1) ->
+    normalizeName
+      (lam v1. normalizeName (lam v2. k (TmApp {{a1 with lhs=TmApp {{a2 with lhs=TmConst c} with rhs=v1}} with rhs=v2})) v2) v1
  end
 
 lang TransformDsDist = TransformDist + DPPLParser
@@ -24,6 +27,7 @@ lang TransformDsDist = TransformDist + DPPLParser
   | IntParam () -- an integer, e.g. UniformDisc 1 5
   | RandomParam () -- a distribution, e.g Gaussian a 1. where a ~ Gaussian 3. 2.
   | SeqFParam () -- a sequence, e.g. Categorical [0.3,0.7]
+  | AffineParam {v:Expr,meanScale:Expr,meanOffset:Expr}
 
   /-
   -- If an observe or assume term is encountered, set the type as RandomParam;otherwise,
@@ -33,6 +37,16 @@ lang TransformDsDist = TransformDist + DPPLParser
   sem createEnvParam env =
   | TmLet ({body = (TmAssume _ | TmObserve _)} & t) ->
     let env = mapInsert t.ident (RandomParam ()) env in
+    createEnvParam (createEnvParam env t.body) t.inexpr
+  | TmLet ({body= TmApp ({lhs = TmApp ({lhs=TmConst ({val= (CAddf ())}&c),rhs=TmVar v1}&a2), rhs=TmVar v2}&a1)}&t) ->
+    let v1Type = mapLookup v1.ident env in
+    let v2Type = mapLookup v2.ident env in
+    let env = switch (v1Type, v2Type)
+    case (Some (RandomParam _),Some (RandomParam _)) then mapInsert t.ident (FloatParam ()) env
+    case (Some (RandomParam p),_) then mapInsert t.ident (AffineParam {v=TmVar v1,meanScale=float_ 1.,meanOffset=TmVar v2}) env
+    case (_,Some (RandomParam p)) then mapInsert t.ident (AffineParam {v=TmVar v2,meanScale=float_ 1.,meanOffset=TmVar v1}) env
+    case _ then mapInsert t.ident (FloatParam ()) env
+    end in
     createEnvParam (createEnvParam env t.body) t.inexpr
   | TmLet t ->
     let env = match tyTm (t.body) with TyFloat _ then
@@ -97,9 +111,14 @@ lang TransformDsDist = TransformDist + DPPLParser
     let p = match assignCons env p with Some x then x else (conapp_ "DelayedGraph_FloatParam" p) in
     i (conapp_ "DelayedGraph_DsDistBernoulli" (i (urecord_ [("p", p)])))
   | DGaussian {mu = mu, sigma = sigma} ->
-    let mu = match assignCons env mu with Some x then x else (conapp_ "DelayedGraph_FloatParam" mu) in
+    match mu with TmVar v in
+    let res = match mapLookup v.ident env with Some (AffineParam p) then
+        let mu = match assignCons env p.v with Some x then x else (conapp_ "DelayedGraph_FloatParam" p.v) in
+        (mu,p.meanScale,p.meanOffset)
+      else let mu = match assignCons env mu with Some x then x else (conapp_ "DelayedGraph_FloatParam" mu) in
+        (mu, float_ 0.,float_ 1.) in
     let sigma = match assignCons env sigma with Some x then x else (conapp_ "DelayedGraph_FloatParam" sigma) in
-    i (conapp_ "DelayedGraph_DsDistGaussian" (i (urecord_ [("mu", mu), ("sigma", sigma)])))
+    i (conapp_ "DelayedGraph_DsDistGaussian" (i (urecord_ [("mu", res.0), ("sigma", sigma), ("meanScale", res.1), ("meanOffset",res.2)])))
   | DCategorical {p = p} ->
     let p = match assignCons env p with Some x then x else (conapp_ "DelayedGraph_SeqFParam" p) in
     i (conapp_ "DelayedGraph_DsDistCategorical" (i (urecord_ [("p", p)])))
@@ -130,6 +149,7 @@ lang DPPLDelayedSampling = MExprPPL + TransformDsDist + MExprPPLDsANF
   | prog ->
     -- apply ANF first
     let prog = normalizeTerm prog in
+    print (mexprToString prog);
     -- get the types for the distribution parameters
     let env = createEnvParam (mapEmpty nameCmp) prog in
     -- if a random variable 'x' needs to be sampled, replace those places with 'value x'
@@ -147,10 +167,14 @@ lang DPPLDelayedSampling = MExprPPL + TransformDsDist + MExprPPLDsANF
     TmLet {t with inexpr = replaceWithValue env t.inexpr}
   | TmLet ({body = TmObserve _} &t) ->
     TmLet {t with inexpr = replaceWithValue env t.inexpr}
+  | TmLet ({body=TmApp ({lhs = TmApp ({lhs=TmConst ({val= (CAddf ())}&c),rhs=TmVar v1}&a2), rhs=TmVar v2}&a1)}&t) ->
+    TmLet {t with inexpr = replaceWithValue env t.inexpr}
   | TmVar a -> -- equivalent to value(X)
     let sampleT = (ulam_ "d" (assume_ (var_ "d"))) in
     let varType = mapLookup a.ident env in
-    match varType with Some (RandomParam _) then
+    match varType with Some (AffineParam p) then
+      appf3_ (var_ "value") sampleT (var_ "graph") (conapp_ "DelayedGraph_AffineParam" (TmVar a))
+    else match varType with Some (RandomParam _) then
       appf3_ (var_ "value") sampleT (var_ "graph") (conapp_ "DelayedGraph_RandomParam" (TmVar a))
     else (TmVar a)
   | t -> smap_Expr_Expr (replaceWithValue env) t
@@ -175,22 +199,16 @@ lang DPPLDelayedSampling = MExprPPL + TransformDsDist + MExprPPLDsANF
   /-
   -- When encountered with TmAssume, replace it with the vertex representation.
   -- createVertex: create a vertex with DsDist
-  -- addVertex: add the vertex to the graph as well as the edges (dependencies)
   -/
   | TmLet ({body = TmAssume a} &t) ->
     let g = var_ "graph" in
+    let sampleT = (ulam_ "d" (assume_ (var_ "d"))) in
     -- create a node
     let tbody = appf2_ (var_ "createVertex") g a.dist in
-    let tinexpr =
-      bindall_
-      [ ulet_ "" (appf2_ (var_ "addVertex") g (nvar_ t.ident))
-        -- insert to the graph
-      , t.inexpr] in
-    TmLet {{{t with body = tbody} with inexpr=delayedTransform env tinexpr} with tyAnnot = tyunknown_}
+    TmLet {{{t with body = tbody} with inexpr=delayedTransform env t.inexpr} with tyAnnot = tyunknown_}
   /-
   -- When encountered with TmObserve,
   -- createObsVertex: create a vertex with DsDist and observed value
-  -- addVertex: add the vertex to the graph as well as the edges (dependencies)
   -- value: call the valueDs function to graft and realize the node
   -- get the marginalized dist and update the TmObserve with its marginalized dist
   -/
@@ -200,15 +218,23 @@ lang DPPLDelayedSampling = MExprPPL + TransformDsDist + MExprPPLDsANF
     let sampleT = (ulam_ "d" (assume_ (var_ "d"))) in
     let tinexpr =
       bindall_
-      [ ulet_ "" (appf2_ (var_ "addVertex") g (nvar_ t.ident))
-      , ulet_ "" (appf3_ (var_ "valueDs") sampleT g (nvar_ t.ident))
+      [ ulet_ "" (appf3_ (var_ "valueDs") sampleT g (nvar_ t.ident))
       , ulet_ "" (TmObserve {a with dist =
           appf3_ (var_ "transformDsDist") sampleT g (appf1_ (var_ "getMargDist") (nvar_ t.ident))
         })
-        --, ulet_ "" (TmObserve {a with dist=appf3_ (var_ "getTDist")  sampleT g a.dist})
         ]
        in
     TmLet {{{t with body = tbody} with inexpr=bind_ tinexpr (delayedTransform env t.inexpr)} with tyAnnot = tyunknown_}
+  | TmLet ({body=TmApp ({lhs = TmApp ({lhs=TmConst ({val= (CAddf ())}&c),rhs=TmVar v1}&a2), rhs=TmVar v2}&a1)}&t) ->
+    let v1Type = mapLookup v1.ident env in
+    let v2Type = mapLookup v2.ident env in
+    let tbody = switch (v1Type, v2Type)
+    case (Some (RandomParam _),Some (RandomParam _)) then t.body
+    case (Some (RandomParam p),_) then (conapp_ "DelayedGraph_AffineParam" (urecord_ [("aV", conapp_ "DelayedGraph_RandomParam" (TmVar v1)), ("meanScale",float_ 1. ), ("meanOffset",TmVar v2)]))
+    case (_,Some (RandomParam p)) then (conapp_ "DelayedGraph_AffineParam" (urecord_ [("aV", TmVar v2), ("meanScale",float_ 1. ), ("meanOffset",TmVar v1)]))
+    case _ then t.body
+    end in
+    TmLet {{{t with body = tbody} with inexpr=(delayedTransform env t.inexpr)} with tyAnnot = tyunknown_}
   | t -> smap_Expr_Expr (delayedTransform env) t
 
 end
