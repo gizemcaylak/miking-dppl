@@ -147,6 +147,7 @@ lang DelayedSampling = DelayedGraph
       let parents = filter (lam p. match p with RandomVarV p in neqi (deref p.state) 2) (getParents v.dist) in
       if null parents then marginalize sampleT t -- if no parents, directly marginalize
       else
+        iter (lam p. valueDs sampleT p) (tail parents);
         let parent = get parents 0 in
         graft sampleT parent;
         marginalize sampleT t);
