@@ -11,6 +11,7 @@ lang DelayedGraph = MExprAst + RuntimeDistElementary
                 value:all a. Ref (Option a),
                 state:Ref Int,
                 next:Ref (Option Vertex),
+               -- side:Ref (Option Vertex),
                 terminal:Ref Bool}
                 -- 0: initialized
                 -- 1: marginalized
@@ -68,11 +69,23 @@ lang DelayedGraph = MExprAst + RuntimeDistElementary
 
   sem createVertex =
   | d ->
-    RandomVarV {state=ref 0, dist=unsafeCoerce d,value=unsafeCoerce (ref (None ())),margDist=unsafeCoerce (ref (None ())),terminal=ref false,next=ref (None ())}
+    RandomVarV {state=ref 0
+    , dist=unsafeCoerce d
+    , value=unsafeCoerce (ref (None ()))
+    , margDist=unsafeCoerce (ref (None ()))
+    --, side=ref (None ())
+    , terminal=ref false
+    , next=ref (None ())}
 
   sem createObsVertex d =
   | value ->
-    RandomVarV {state=ref 0, dist=unsafeCoerce d,value=unsafeCoerce (ref (Some value)),margDist=unsafeCoerce (ref (None ())),terminal=ref false,next=ref (None ())}
+    RandomVarV {state=ref 0
+    , dist=unsafeCoerce d
+    , value=unsafeCoerce (ref (Some value))
+    , margDist=unsafeCoerce (ref (None ()))
+    , terminal=ref false
+    --, side = ref (None ())
+    , next=ref (None ())}
 
   sem d2str =
   | DsDistBernoulli d -> "DsDistBernoulli"
@@ -266,12 +279,10 @@ lang DelayedSampling = DelayedGraph
     Some (DsDistGamma {shape = FloatParam pSh, scale = FloatParam pSc})
   | _ -> None () --neverr
 
-
-  -- TODO add the scale factors for Gaussian
   sem transformDsDist sampleT =
   | DsDistBernoulli t -> DistBernoulli {p = value (unsafeCoerce sampleT) t.p}
   | DsDistBeta t -> DistBeta {a = value (unsafeCoerce sampleT) t.a, b = value (unsafeCoerce sampleT) t.b}
-  | DsDistGaussian t -> DistGaussian {mu = addf t.meanOffset (value (unsafeCoerce sampleT) t.mu), sigma = value (unsafeCoerce sampleT)  t.sigma}
+  | DsDistGaussian t -> DistGaussian {mu = addf t.meanOffset (mulf t.meanScale (value (unsafeCoerce sampleT) t.mu)), sigma = value (unsafeCoerce sampleT)  t.sigma}
   | DsDistCategorical t -> DistCategorical { p = value (unsafeCoerce sampleT) t.p}
   | DsDistPoisson t -> DistPoisson {lambda = value (unsafeCoerce sampleT)  t.lambda}
   | DsDistBinomial t -> DistBinomial {n = value (unsafeCoerce sampleT) t.n, p = value (unsafeCoerce sampleT) t.p}
