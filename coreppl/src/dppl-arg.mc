@@ -28,6 +28,9 @@ type Options = {
   -- generic.
   transform: Bool,
 
+  -- To enable the runtime delayed sampling
+  delayedSampling: Bool,
+
   -- Where to resample in SMC
   resample: String,
 
@@ -78,6 +81,7 @@ let default = {
   outputMc = false,
   output = "out",
   transform = false,
+  delayedSampling = false,
   printSamples = true,
   stackSize = 10000,
   cps = "partial",
@@ -156,6 +160,10 @@ let config = [
     "The model is transformed to an efficient representation if possible.",
     lam p: ArgPart Options.
       let o: Options = p.options in {o with transform = true}),
+  ([("--delayed", "", "")],
+    "Delayed sampling is activated.",
+    lam p: ArgPart Options.
+      let o: Options = p.options in {o with delayedSampling = true}),
   ([("--no-print-samples", "", "")],
     "Do not print the final samples in the compiled program.",
     lam p: ArgPart Options.

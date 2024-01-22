@@ -17,6 +17,7 @@ include "extract.mc"
 include "backcompat.mc"
 include "dists.mc"
 include "runtimes.mc"
+include "delayed-sampling/compile.mc"
 
 lang DPPLKeywordReplace = DPPLParser
   sem _makeError : Info -> String -> Expr
@@ -60,7 +61,7 @@ end
 lang MExprCompile =
   MExprPPL + Resample + Externals + DPPLParser + DPPLExtract + LoadRuntime +
   Transformation + DPPLKeywordReplace + DPPLTransformDist + MExprSubstitute +
-  MExprANFAll + CPPLBackcompat
+  MExprANFAll + CPPLBackcompat + DPPLDelayedSampling
 
   sem transformModelAst : Options -> Expr -> Expr
   sem transformModelAst options =
@@ -70,7 +71,9 @@ lang MExprCompile =
       if options.transform then
         transform modelAst
       else modelAst in
-
+    let ast = if options.delayedSampling then
+      delayedSampling ast
+      else ast in
     -- Optionally print the model AST
     (if options.printModel then
       printLn (mexprPPLToString ast)
