@@ -232,7 +232,7 @@ lang DelayedSampling = DelayedGraph
     let b = unwrap p.b in
     let pp = divf a (addf a b) in
     Some (DsDistBernoulli {l with p = FloatParam pp})
-  | (DsDistGaussian p, DsDistGaussian l) ->
+  | (DsDistGaussian p, DsDistGaussian ({mu= RandomParam _}&l)) ->
     let mu0 = addf (mulf (unwrap p.mu) l.meanScale) l.meanOffset in
     let s0 = mulf (unwrap p.sigma) (absf l.meanScale) in
     let s = unwrap l.sigma in
