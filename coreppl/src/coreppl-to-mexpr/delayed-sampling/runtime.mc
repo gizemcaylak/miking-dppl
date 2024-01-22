@@ -1,4 +1,3 @@
-include "delayed-graph-mapadj.mc"
 include "mexpr/ast.mc"
 include "../runtime-dists.mc"
 
