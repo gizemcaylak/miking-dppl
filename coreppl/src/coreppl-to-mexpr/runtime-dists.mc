@@ -68,6 +68,8 @@ lang RuntimeDistElementary = RuntimeDistBase
   | DistDirichlet {a : [Float]}
   | DistUniform {a : Float, b : Float}
   | DistWiener {}
+  | DistLomax {scale: Float, shape : Float}
+  | DistBetabin {n:Int, a: Float, b: Float}
 
   sem sample =
   | DistGamma t -> unsafeCoerce (gammaSample t.shape t.scale)
@@ -82,6 +84,8 @@ lang RuntimeDistElementary = RuntimeDistBase
   | DistDirichlet t -> unsafeCoerce (dirichletSample t.a)
   | DistUniform t -> unsafeCoerce (uniformContinuousSample t.a t.b)
   | DistWiener _ -> unsafeCoerce (wienerSample ())
+  | DistLomax t -> unsafeCoerce (lomaxSample t.scale t.shape)
+  | DistBetabin t -> unsafeCoerce (betabinSample t.n t.a t.b)
 
   sem logObserve =
   | DistGamma t -> unsafeCoerce (gammaLogPdf t.shape t.scale)
@@ -99,6 +103,8 @@ lang RuntimeDistElementary = RuntimeDistBase
   | DistDirichlet t -> unsafeCoerce (dirichletLogPdf t.a)
   | DistUniform t -> unsafeCoerce (uniformContinuousLogPdf t.a t.b)
   | DistWiener _ -> error "logObserve undefined for the Wiener process"
+  | DistLomax t -> unsafeCoerce (lomaxLogPdf t.scale t.shape)
+  | DistBetabin t -> unsafeCoerce (betabinLogPmf t.n t.a t.b)
 end
 
 -- Elementary distributions with samples lifted to dual numbers
