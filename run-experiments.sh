@@ -26,7 +26,7 @@ case "$dataset" in
         case "$model" in
             "lda")
                 echo "Model: lda"
-                python scripts/run-plot-transform-results-cppl.py coreppl/models/experiments/lda/ --modelN lda --datasetName lw --filename lda-lw --lstPT 300 3000 30000 --lstP 300 3000 30000 --numruns $nrun
+                python3 scripts/run-plot-transform-results-cppl.py coreppl/models/experiments/lda/ --modelN lda --datasetName lw --filename lda-lw --lstPT 300 3000 30000 --lstP 300 3000 30000 --numruns $nrun
                 ;;
             *)
                 echo "Invalid model-data combination specified"
@@ -40,7 +40,7 @@ case "$dataset" in
         case "$model" in
             "lda")
                 echo "Model: lda"
-                python scripts/run-plot-transform-results-cppl.py coreppl/models/experiments/lda/ --modelN lda --datasetName c3 --filename lda-c3 --lstPT 300 3000 30000 --lstP 300 3000 30000 --numruns $nrun
+                python3 scripts/run-plot-transform-results-cppl.py coreppl/models/experiments/lda/ --modelN lda --datasetName c3 --filename lda-c3 --lstPT 300 3000 30000 --lstP 300 3000 30000 --numruns $nrun
                 ;;
             *)
                 echo "Invalid model-data combination specified"
@@ -54,7 +54,7 @@ case "$dataset" in
         case "$model" in
             "lda")
                 echo "Model: lda"
-                python scripts/run-plot-transform-results-cppl.py coreppl/models/experiments/lda/ --modelN lda --datasetName nips40 --filename lda-nips40 --lstPT 300 3000 30000 --lstP 300 3000 30000 --numruns $nrun
+                python3 scripts/run-plot-transform-results-cppl.py coreppl/models/experiments/lda/ --modelN lda --datasetName nips40 --filename lda-nips40 --lstPT 300 3000 30000 --lstP 300 3000 30000 --numruns $nrun
                 ;;
             *)
                 echo "Invalid model specified"
@@ -68,7 +68,7 @@ case "$dataset" in
         case "$model" in
             "blr")
                 echo "Model: blr"
-                python scripts/run-plot-transform-results-cppl.py coreppl/models/experiments/blr/ --modelN blr --datasetName housing --filename blr --lstPT 300 3000 30000 --lstP 300 3000 30000 --numruns $nrun
+                python3 scripts/run-plot-transform-results-cppl.py coreppl/models/experiments/blr/ --modelN blr --datasetName housing --filename blr --lstPT 300 3000 30000 --lstP 300 3000 30000 --numruns $nrun
                 ;;
             *)
                 echo "Invalid model specified"
@@ -82,21 +82,7 @@ case "$dataset" in
         case "$model" in
             "vbd")
                 echo "Model: vbd"
-                python scripts/run-plot-transform-results-cppl-no-static.py coreppl/models/experiments/vbd/ --modelN vbd --datasetName vbd --filename vbd --lstPT 3000 30000 300000 --lstP 3000 30000 300000 --numruns $nrun
-                ;;
-            *)
-                echo "Invalid model specified"
-                usage
-                exit 1
-                ;;
-        esac
-        ;;
-        "crbd-data")
-        echo "Running crbd data"
-        case "$model" in
-            "crbd")
-                echo "Model: crbd"
-                python scripts/run-plot-transform-results-cppl-no-static.py coreppl/models/experiments/crbd/ --modelN crbd --datasetName alcedinidae --filename crbd --lstPT 300 3000 30000 --lstP 300 3000 30000 --numruns $nrun
+                python3 scripts/run-plot-transform-results-cppl-no-static.py coreppl/models/experiments/vbd/ --modelN vbd --datasetName vbd --filename vbd --lstPT 3000 30000 300000 --lstP 3000 30000 300000 --numruns $nrun
                 ;;
             *)
                 echo "Invalid model specified"
