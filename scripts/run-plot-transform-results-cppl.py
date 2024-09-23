@@ -1,19 +1,13 @@
-# for each of the cases run with and without transformation with increasing number of particles
+# for each of the cases run with and without transformations with increasing number of particles
 # plot a graph where x-axis is the number of particles and y-axis is the sample mean
 # save them in a format
 
 #python scripts/run-plot-transform-results-cppl.py coreppl/models/experiments/lda/ --modelN lda --datasetName lw --filename lda-lw --lstPT 300 3000 30000 --lstP 300 3000 30000 --numruns 30
-#nohup python scripts/run-plot-transform-results-cppl.py coreppl/models/static-delay-paper-experiment/lda/ --modelN lda --datasetName nips40 --filename lda-nips40 --lstPT 100 1000 10000 --lstP 100 1000 10000 --numruns 30 &
-#nohup python scripts/run-plot-transform-results-cppl.py coreppl/models/static-delay-paper-experiment/lda/ --modelN lda --datasetName lwv100 --filename lda-lw-v100 --lstPT 300 3000 30000 --lstP 300 3000 30000 --numruns 30 &
-#nohup python scripts/run-plot-transform-results-cppl.py coreppl/models/static-delay-paper-experiment/lda/ --modelN lda --datasetName lwd50 --filename lda-lw-d50--lstPT 300 3000 30000 --lstP 300 3000 30000 --numruns 30 &
-#nohup python scripts/run-plot-transform-results-cppl.py coreppl/models/static-delay-paper-experiment/lda/ --modelN lda --datasetName lww20 --filename lda-lw-w20 --lstPT 300 3000 30000 --lstP 300 3000 30000 --numruns 30 &
-# python scripts/run-plot-transform-results-cppl.py coreppl/models/experiments/blr/ --modelN blr --datasetName housing --filename blr --lstPT 300 3000 30000 --lstP 300 3000 30000 --numruns 30
 
 import os
 import argparse
 import seaborn as sns
 import pandas as pd
-from scipy.special import rel_entr
 import matplotlib.pyplot as plt
 import subprocess
 import math
@@ -142,7 +136,7 @@ fT.close()
 
 
 filepathHardcoded = filepath + "static-delayed/" + filenameS
-subprocess.run(['cppl',  filepathHardcoded +".mc", '--no-print-samples', '--static-delay-ref', "--extract-simplification", "inline","--cps","none"])
+subprocess.run(['cppl',  filepathHardcoded +".mc", '--no-print-samples', '--static-delay', "--extract-simplification", "inline","--cps","none"])
 norm_static = []
 filenameT =  resdir + "/time" + modelN + "-"  + datasetName + "-" + "static" + ".dat"
 fT = open(filenameT, "w")
@@ -176,6 +170,4 @@ for i,p in enumerate(numparticlesTransformed):
 subprocess.run(['rm', './out'])
 fT.close()
 
-plot_box(norm_auto_dynamic_delayed, "Dynamic pruning",norm_static,"Static pruning",norm_nodelayed, "Nodelay",numparticlesNontransformed)
-
-
+plot_box(norm_auto_dynamic_delayed, "Dynamic delay",norm_static,"Static delay",norm_nodelayed, "No delay",numparticlesNontransformed)
