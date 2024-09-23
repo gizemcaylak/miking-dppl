@@ -8,7 +8,6 @@ import os
 import argparse
 import seaborn as sns
 import pandas as pd
-from scipy.special import rel_entr
 import matplotlib.pyplot as plt
 import subprocess
 import math
