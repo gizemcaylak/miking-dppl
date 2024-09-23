@@ -26,7 +26,7 @@ case "$dataset" in
         case "$model" in
             "lda")
                 echo "Model: lda"
-                python3.12 scripts/run-plot-transform-results-cppl.py coreppl/models/experiments/lda/ --modelN lda --datasetName lw --filename lda-lw --lstPT 300 3000 30000 --lstP 300 3000 30000 --numruns $nrun
+                python scripts/run-plot-transform-results-cppl.py coreppl/models/experiments/lda/ --modelN lda --datasetName lw --filename lda-lw --lstPT 300 3000 30000 --lstP 300 3000 30000 --numruns $nrun
                 ;;
             *)
                 echo "Invalid model-data combination specified"
