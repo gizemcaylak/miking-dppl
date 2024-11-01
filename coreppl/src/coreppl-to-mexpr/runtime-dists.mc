@@ -50,6 +50,8 @@ lang RuntimeDistBase
 
   sem sample : all a. Dist a -> a
 
+  sem expectation : Dist Float -> Float
+
   sem logObserve : all a. Dist a -> (a -> Float)
 end
 
@@ -68,6 +70,9 @@ lang RuntimeDistElementary = RuntimeDistBase
   | DistDirichlet {a : [Float]}
   | DistUniform {a : Float, b : Float}
   | DistWiener {}
+  | DistLomax {scale: Float, shape : Float}
+  | DistBetabin {n:Int, a: Float, b: Float}
+  | DistNegativeBinomial {n:Int, p: Float}
 
   sem sample =
   | DistGamma t -> unsafeCoerce (gammaSample t.shape t.scale)
@@ -82,6 +87,27 @@ lang RuntimeDistElementary = RuntimeDistBase
   | DistDirichlet t -> unsafeCoerce (dirichletSample t.a)
   | DistUniform t -> unsafeCoerce (uniformContinuousSample t.a t.b)
   | DistWiener _ -> unsafeCoerce (wienerSample ())
+  | DistLomax t -> unsafeCoerce (lomaxSample t.shape t.scale)
+  | DistBetabin t -> unsafeCoerce (betabinSample t.n t.a t.b)
+  | DistNegativeBinomial t -> unsafeCoerce (negativeBinomialSample t.n t.p)
+
+  -- Expectation of primitive distributions over real values
+  sem expectation =
+  | DistGamma t -> mulf t.shape t.scale
+  | DistExponential t -> divf 1. t.rate
+  | DistPoisson t -> t.lambda
+  | DistBinomial t -> mulf t.p (int2float t.n)
+  | DistBernoulli t -> t.p
+  | DistBeta t -> divf t.a (addf t.a t.b)
+  | DistGaussian t -> t.mu
+  | DistMultinomial t ->
+    error "expectation undefined for the multinomial distribution"
+  | DistCategorical t ->
+    error "expectation undefined for the categorical distribution"
+  | DistDirichlet t ->
+    error "expectation undefined for the Dirichlet distribution"
+  | DistUniform t -> divf (addf t.a t.b) 2.
+  | DistWiener _ -> error "expectation undefined for the Wiener process"
 
   sem logObserve =
   | DistGamma t -> unsafeCoerce (gammaLogPdf t.shape t.scale)
@@ -99,6 +125,9 @@ lang RuntimeDistElementary = RuntimeDistBase
   | DistDirichlet t -> unsafeCoerce (dirichletLogPdf t.a)
   | DistUniform t -> unsafeCoerce (uniformContinuousLogPdf t.a t.b)
   | DistWiener _ -> error "logObserve undefined for the Wiener process"
+  | DistLomax t -> unsafeCoerce (lomaxLogPdf t.shape t.scale)
+  | DistBetabin t -> unsafeCoerce (betabinLogPmf t.n t.a t.b)
+  | DistNegativeBinomial t -> unsafeCoerce (negativeBinomialLogPmf t.n t.p)
 end
 
 -- Elementary distributions with samples lifted to dual numbers
@@ -120,6 +149,9 @@ lang RuntimeDistElementaryDual = RuntimeDistElementary
     unsafeCoerce
       (let f = unsafeCoerce (sample d) in lam x. Primal (f (dualPrimalRec x)))
   | DistDual d -> sample d
+
+  sem expectation =
+  | DistDual d -> expectation d
 
   sem logObserve =
   | DistDual (d &
@@ -244,6 +276,13 @@ lang RuntimeDistEmpirical = RuntimeDistBase
     else
       error "Sampling from empirical distribution failed"
 
+  sem expectation =
+  | DistEmpirical t ->
+    let weights = map exp t.logWeights in
+    -- NOTE(oerikss, 2024-09-13): We assume that samples are floats. The
+    -- type-system should reject expectation of distributions over other types.
+    foldl addf 0. (zipWith mulf weights (unsafeCoerce t.samples))
+
   sem logObserve =
   -- TODO(dlunde,2022-10-18): Implement this?
   | DistEmpirical t -> error "Log observe not supported for empirical distribution"
@@ -293,6 +332,10 @@ let distEmpiricalAcceptRate : all a. use RuntimeDist in Dist a -> Float =
 let sample : all a. use RuntimeDist in Dist a -> a =
   use RuntimeDist in
   sample
+
+let expectation : all a. use RuntimeDist in Dist Float -> Float =
+  use RuntimeDist in
+  expectation
 
 let logObserve : all a. use RuntimeDist in Dist a -> a -> Float =
   use RuntimeDist in

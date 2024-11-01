@@ -14,7 +14,7 @@ include "inference/mcmc-lightweight.mc"
 include "inference/mcmc-naive.mc"
 include "inference/mcmc-trace.mc"
 include "inference/pmcmc-pimh.mc"
-include "solveode/rk4.mc"
+include "ode-solver-method.mc"
 
 lang DPPLParser =
   BootParser + MExprPrettyPrint + MExprPPL + Resample +
@@ -24,7 +24,7 @@ lang DPPLParser =
   LightweightMCMCMethod  + NaiveMCMCMethod + TraceMCMCMethod +
   PIMHMethod +
 
-  RK4Method
+  ODESolverMethod
 
   sem _interpretMethod : Expr -> (Info, String, Map SID Expr)
   sem _interpretMethod =
@@ -117,6 +117,8 @@ lang DPPLParser =
   | TmPruned _ -> true
   | TmCancel _ -> true
   | TmDiff _ -> true
+  | TmDelay _ -> true
+  | TmDelayed _ -> true
 
   sem matchKeywordString (info: Info) =
   | "assume" -> Some (1, lam lst. TmAssume {dist = get lst 0,
@@ -171,7 +173,7 @@ lang DPPLParser =
   | "Binomial" -> Some (2, lam lst. TmDist {dist = DBinomial {n = get lst 0, p = get lst 1},
                                         ty = TyUnknown {info = info},
                                         info = info})
-  | "Wiener" -> Some (1, lam lst. TmDist {dist = DWiener {},
+  | "Wiener" -> Some (1, lam lst. TmDist {dist = DWiener {a = get lst 0},
                                        ty = TyUnknown {info = info},
                                        info = info})
   | "solveode" -> Some (4, lam lst. TmSolveODE {method = interpretODESolverMethod (get lst 0),
@@ -194,14 +196,26 @@ lang DPPLParser =
                                           value = getValueCancel (get lst 0),
                                           ty = TyUnknown {info = info},
                                           info = info})
+  | "delay" -> Some (1, lam lst. TmDelay {dist = get lst 0,
+                                          ty = TyUnknown {info = info},
+                                          info = info})
+  | "delayed" -> Some (1, lam lst. TmDelayed {delay = get lst 0,
+                                          ty = TyUnknown {info = info},
+                                          info = info})
 
   sem isTypeKeyword =
   | TyDist _ -> true
   | TyPruneInt _ -> true
+  | TyDelayInt _ -> true
+  | TyDelayFloat _ -> true
+  | TyDelaySeqF _ -> true
 
   sem matchTypeKeywordString (info: Info) =
   | "Dist" -> Some(1, lam lst. TyDist { info = info, ty = get lst 0 })
   | "PruneInt" -> Some(0, lam lst. TyPruneInt { info = info})
+  | "DelayInt" -> Some(0, lam lst. TyDelayInt { info = info})
+  | "DelayFloat" -> Some(0, lam lst. TyDelayFloat { info = info})
+  | "DelaySeqF" -> Some(0, lam lst. TyDelaySeqF { info = info})
 
 end
 
@@ -211,6 +225,7 @@ let builtin = use MExprPPL in concat
   , ("distEmpiricalDegenerate", CDistEmpiricalDegenerate ())
   , ("distEmpiricalNormConst", CDistEmpiricalNormConst ())
   , ("distEmpiricalAcceptRate", CDistEmpiricalAcceptRate ())
+  , ("expectation", CDistExpectation ())
     -- External elementary functions
   , ("sin", CSin ())
   , ("cos", CCos ())

@@ -22,6 +22,7 @@ include "dists.mc"
 include "runtimes.mc"
 
 include "pruning/compile.mc"
+include "delayed-sampling/compile.mc"
 
 lang DPPLKeywordReplace = DPPLParser
   sem _makeError : Info -> String -> Expr
@@ -69,7 +70,7 @@ lang ODETransform = DPPLParser + MExprSubstitute + MExprFindSym + LoadRuntime
     let tm = replaceDefaultODESolverMethod options tm in
 
     -- extract ODE solve methods
-    match extractSolveODE tm with (methods, tm) in
+    match odeExtractSolve tm with (methods, tm) in
 
     if mapIsEmpty methods then
       -- There are no solveode terms in the term.
@@ -77,7 +78,7 @@ lang ODETransform = DPPLParser + MExprSubstitute + MExprFindSym + LoadRuntime
     else
       -- load ODE solver runtime
       let runtime =
-        symbolizeAllowFree (loadRuntime true "runtime-ode-wrapper.mc")
+        symbolizeAllowFree (loadRuntimeFile true "runtime-ode-wrapper.mc")
       in
 
       -- collect the names of used ODE solvers runtime names and make sure they
@@ -93,10 +94,33 @@ lang ODETransform = DPPLParser + MExprSubstitute + MExprFindSym + LoadRuntime
   sem odeODESolverMethodToRuntimeName : ODESolverMethod -> String
   sem odeODESolverMethodToRuntimeName =
   | RK4 _ -> "odeSolverRK4Solve"
+  | EF _ -> "odeSolverEFSolve"
   | method -> error (join [
     odeSolverMethodToString method,
     " does not have an implementation in the ODE solver runtime"
   ])
+
+  -- Extracts solveode terms to a map from ODE solver methods to names. Each
+  -- solveode term is replaced by an application of an identifier the named
+  -- according to the returned map.
+  sem odeExtractSolve : Expr -> (Map ODESolverMethod Name, Expr)
+  sem odeExtractSolve =| tm ->
+    recursive let inner = lam acc. lam tm.
+      match tm with TmSolveODE r then
+        let f : Name -> Expr = lam name.
+          appf4_ (nvar_ name)
+            (odeSolverMethodConfig r.info r.method) r.model r.init r.endTime
+        in
+        optionMapOrElse
+          (lam.
+            let name = nameSym (odeSolverMethodToString r.method) in
+            let acc = mapInsert r.method name acc in
+            (acc, f name))
+          (lam name. (acc, f name))
+          (mapLookup r.method acc)
+      else smapAccumL_Expr_Expr inner acc tm
+    in
+    inner (mapEmpty cmpODESolverMethod) tm
 end
 
 lang DPPLTransformCancel = DPPLParser
@@ -108,6 +132,34 @@ lang DPPLTransformCancel = DPPLParser
                ty = t.ty}
   | t -> smap_Expr_Expr replaceCancel t
 end
+
+lang DPPLDelayedReplace = DPPLParser
+   sem replaceDelayKeywords =
+   | TmDelay t -> TmAssume { dist = t.dist, ty = t.ty, info = t.info }
+   | TmDelayed t -> t.delay
+   | t -> smap_Expr_Expr replaceDelayKeywords t
+
+  sem replaceDelayTypes =
+  | t ->
+    let t = smap_Expr_Type toRuntimeDelayTyVar t in
+    let t = smap_Expr_TypeLabel toRuntimeDelayTyVar t in
+    let t = smap_Expr_Pat replaceDelayTyVarPat t in
+    let t = smap_Expr_Expr replaceDelayTypes t in
+    withType (toRuntimeDelayTyVar (tyTm t)) t
+
+  sem toRuntimeDelayTyVar : Type -> Type
+  sem toRuntimeDelayTyVar =
+  | TyDelayInt t -> TyInt {info=t.info}
+  | TyDelayFloat t -> TyFloat {info=t.info}
+  | TyDelaySeqF t -> TySeq {info=t.info,ty=TyFloat {info=t.info}}
+  | ty -> smap_Type_Type toRuntimeDelayTyVar ty
+
+  sem replaceDelayTyVarPat : Pat -> Pat
+  sem replaceDelayTyVarPat =
+  | p ->
+    let p = smap_Pat_Pat replaceDelayTyVarPat p in
+    withTypePat (toRuntimeDelayTyVar (tyPat p)) p
+ end
 
 lang ADTransform =
   DPPLParser +
@@ -136,7 +188,7 @@ lang ADTransform =
     let runtimeFile = "runtime-ad-wrapper.mc" in
 
     -- load AD runtime
-    let runtime = symbolize (loadRuntime true runtimeFile) in
+    let runtime = symbolize (loadRuntimeFile true runtimeFile) in
 
     -- Define function that maps string identifiers to names
     let s2n = makeRuntimeNameMap runtime (_adTransformRuntimeIds ()) in
@@ -162,7 +214,8 @@ lang ADTransform =
   | CEpsilon _ -> withInfo (infoTm tm) (_var env "dualnumEpsilon")
   | CPrimal _ -> withInfo (infoTm tm) (_var env "dualnumPrimal")
   | CPrimalRec _ -> withInfo (infoTm tm) (_var env "dualnumPrimalRec")
-  | CPertubation _ -> withInfo (infoTm tm) (_var env "dualnumPertubation")
+  | CUnboxPrimalExn _ -> withInfo (infoTm tm) (_var env "dualnumUnboxPrimalExn")
+  | CPertubation _ -> withInfo (infoTm tm) (_var env "dualnumPertubationExn")
   | CLifted (CFloat r) ->
     let i = withInfo (infoTm tm) in
     withInfo (infoTm tm) (nconapp_ (_name env "Primal") (i (float_ r.val)))
@@ -206,7 +259,8 @@ lang ADTransform =
     "dualnumGenEpsilon",
     "dualnumPrimal",
     "dualnumPrimalRec",
-    "dualnumPertubation",
+    "dualnumUnboxPrimalExn",
+    "dualnumPertubationExn",
     "addn",
     "muln",
     "eqn",
@@ -241,7 +295,7 @@ lang ElementaryFunctionsTransform = ElementaryFunctions + LoadRuntime
     let runtimeFile = "runtime-elementary-wrapper.mc" in
 
     -- load elementary functions runtime
-    let runtime = symbolize (loadRuntime true runtimeFile) in
+    let runtime = symbolize (loadRuntimeFile true runtimeFile) in
 
     -- Define function that maps string identifiers to names
     let stringToName =
@@ -283,7 +337,7 @@ lang MExprCompile =
   StaticDelay + DPPLKeywordReplace + DPPLTransformDist + MExprSubstitute +
   MExprANFAll + CPPLBackcompat +
   ODETransform + DPPLTransformCancel + DPPLPruning +
-  ElementaryFunctionsTransform
+  ElementaryFunctionsTransform + DPPLDelayedReplace + DPPLDelayedSampling
   + ADTransform
 
   sem transformModelAst : Options -> Expr -> Expr
@@ -300,6 +354,11 @@ lang MExprCompile =
         prune ast
       else ast in
     let ast = replaceCancel ast in
+    let ast =
+      if options.dynamicDelay then
+        delayedSampling ast
+      else ast in
+    let ast = replaceDelayTypes (replaceDelayKeywords ast) in
     -- Optionally print the model AST
     (if options.printModel then
       printLn (mexprPPLToString ast)
@@ -384,7 +443,7 @@ lang MExprCompile =
     let modelAsts = compileModels options runtimes models in
 
     -- Transform distributions in the CorePPL AST to use MExpr code.
-    let corepplAst = replaceTyPruneInt (removePrunes ((replaceCancel corepplAst))) in
+    let corepplAst = replaceDelayTypes (replaceDelayKeywords (replaceTyPruneInt (removePrunes ((replaceCancel corepplAst))))) in
     let corepplAst = transformDistributions corepplAst in
 
     -- Symbolize any free occurrences in the CorePPL AST and in any of the
@@ -497,7 +556,7 @@ lang MExprCompile =
   sem replaceHigherOrderConstants =
   | t ->
     let t = mapPre_Expr_Expr _replaceHigherOrderConstantExpr t in
-    let replacements = loadRuntime false "runtime-const.mc" in
+    let replacements = loadRuntimeFile false "runtime-const.mc" in
     let replacements = normalizeTerm replacements in
     let t = bind_ replacements t in
     let t = symbolizeExpr
