@@ -67,6 +67,154 @@ lang MExprPPLLightweightMCMC =
   ------------------------------------------
   -- DYNAMIC ("LIGHTWEIGHT") ALIGNED MCMC --
   ------------------------------------------
+
+  sem compileTempered : Options -> (Expr,Expr) -> Expr
+  sem compileTempered options =
+  | (_,t) ->
+
+    -- Addressing transform combined with CorePPL->MExpr transform
+    let t = transformAddrTempered (setEmpty nameCmp) t in
+
+    -- Type addressing transform
+    let t = mapPre_Expr_Expr exprTyTransform t in
+
+    -- Transform distributions to MExpr distributions
+    let t = mapPre_Expr_Expr transformTmDist t in
+
+    -- Initialize addr to the empty list (not rope) at the
+    -- beginning of the program.
+    let t = bind_ (nulet_ addrName (var_ "emptyAddress")) t in
+
+    t
+  sem transformAddrTempered: Set Name -> Expr -> Expr
+  sem transformAddrTempered externalIds =
+
+  | t -> smap_Expr_Expr (transformAddrTempered externalIds) t
+
+  | TmLam _ & t ->
+    match smap_Expr_Expr (transformAddrTempered externalIds) t with TmLam r & t in
+    let i = withInfo r.info in
+    i (nlam_ addrName (tycon_ "Address") t)
+
+  | TmConst r & t ->
+    if isHigherOrderFunType (tyConst r.val) then
+      -- TODO(dlunde,2022-09-19): Add support for higher-order constant functions
+      errorSingle [r.info]
+        "Higher-order constant functions not yet supported in addressing transformAddr"
+    else
+      transformConst (constArity r.val) t
+
+  -- NOTE(dlunde,2022-10-24): We keep track of externals currently in scope.
+  -- Note that the ANF transformation "replaces" externals with their eta
+  -- expansions. Hence, we must also remove externals from scope after a `let`
+  -- defines them anew.
+  | TmExt r & t ->
+    TmExt { r with inexpr = transformAddrTempered (setInsert r.ident externalIds) r.inexpr }
+  | TmLet ({ ident = ident, body = TmAssume ({ dist = dist }&a),
+            inexpr = inexpr } & r) & t ->
+    let i = withInfo r.info in
+    let dist = transformAddrTempered externalIds dist in
+    let body = i (appf2_ (i (var_ "sample")) (addr a.info) dist) in
+    let weight = i (appf2_ (i (var_ "logObserve")) dist (nvar_ ident)) in
+    let pWeight = ulet_ "" (i (appf1_ (i (var_ "updatePriorWeight")) weight)) in
+    let inexpr = transformAddrTempered (setRemove r.ident externalIds) r.inexpr in
+    TmLet { r with body = body, inexpr = bind_ pWeight inexpr}
+  | TmLet r ->
+    let body = transformAddrTempered externalIds r.body in
+    let inexpr = transformAddrTempered (setRemove r.ident externalIds) r.inexpr in
+    TmLet { r with body = body, inexpr = inexpr }
+
+  | TmApp _ & t ->
+
+    -- NOTE(dlunde,2022-09-07): the somewhat obscure code below code replaces
+    -- an application a b c d with
+    --
+    --   (tr a) s1 (tr b) s2 (tr c) s3 (tr d),
+    --
+    -- where s1-s3 are unique symbols and tr represents recursively applying
+    -- the transformation. However, if a is a variable that refers to an
+    -- external (which are guaranteed to always be fully applied), it instead
+    -- simply results in
+    --
+    --   (tr a) (tr b) (tr c) (tr d)
+    --
+    -- as externals cannot be curried or sent as first-class values (nor can
+    -- they evaluate any `assume`s internally).
+    --
+    -- Lastly, we also optimize (full _and_ partial) constant applications. For
+    -- example, assume a is a constant of arity 4. The result is then
+    --
+    --   lam addr. lam e. a (tr b) (tr c) (tr d) e
+
+    let transformApp = lam app.
+      match app with TmApp r then
+        let i = withInfo r.info in
+        TmApp {r with lhs = i (app_ r.lhs (addr r.info))}
+      else error "Impossible"
+    in
+
+    recursive let rec = lam app. lam numArgs.
+      match app with TmApp r then
+
+        -- Always transform the argument (the rhs)
+        let r = { r with rhs = transformAddrTempered externalIds r.rhs } in
+
+        -- Recurse over lhs if it's an app
+        match r.lhs with TmApp _ then
+          match rec r.lhs (addi 1 numArgs) with (lhs, constExtArgs) in
+          let app = TmApp { r with lhs = lhs } in
+          if gti constExtArgs 0 then
+            (app, subi constExtArgs 1)
+          else
+            (transformApp app, 0)
+
+        -- Base case: variables (including external applications)
+        else match r.lhs with TmVar { ident = ident } then
+          if setMem ident externalIds
+            then (TmApp r, numArgs) else (transformApp (TmApp r), 0)
+
+        -- Base case: constant application
+        else match r.lhs with TmConst rc then
+          if isHigherOrderFunType (tyConst rc.val) then
+            -- TODO(dlunde,2022-09-19): Add support for higher-order constant functions
+            errorSingle [rc.info]
+              "Higher-order constant functions not yet supported in addressing transform"
+          else
+            (TmApp r, subi (constArity rc.val) 1)
+
+        -- Base case: other (e.g., lambdas)
+        -- OPT(dlunde,2022-09-08): Lambdas could also be optimized if applied
+        -- directly when constructed (as they, at least partially, can't escape
+        -- then).
+        else
+          let app = TmApp { r with lhs = transformAddrTempered externalIds r.lhs } in
+          (transformApp app, 0)
+
+      else error "Impossible"
+    in
+
+    match rec t 0 with (t,remainingConstArity) in
+    transformConst remainingConstArity t
+  -- due to ANF and previous catch with tmlet shouldn't enter here
+  | TmAssume r -> error "Impossible"
+    /-let i = withInfo r.info in
+    let dist = transformAddr externalIds r.dist in
+    i (appf2_ (i (var_ "sample")) (addr r.info) dist)-/
+    
+  | TmObserve r ->
+    let i = withInfo r.info in
+    let dist = transformAddrTempered externalIds r.dist in
+    let value = transformAddrTempered externalIds r.value in
+    let weight = i (appf2_ (i (var_ "logObserve")) dist value) in
+    i (appf1_ (i (var_ "updateWeight")) weight)
+
+  | TmWeight r ->
+    let i = withInfo r.info in
+    let weight = transformAddrTempered externalIds r.weight in
+    i (appf1_ (i (var_ "updateWeight")) weight)
+
+  | TmResample r -> withInfo r.info unit_
+
   sem compile : Options -> (Expr,Expr) -> Expr
   sem compile options =
   | (_,t) ->
@@ -405,15 +553,17 @@ let compilerLightweightMCMC = lam options. use MExprPPLLightweightMCMC in
   error "--mcmc-lw-gprob must be between 0.0 and 1.0"
   else ());
 
-  switch (options.align, options.cps)
-    case (true,"none") then
+  switch (options.align, options.cps, options.temper)
+    case (true,"none",false) then
       ("mcmc-lightweight/runtime-aligned.mc", compileAligned options)
-    case (true,_) then
+    case (true,_,false) then
       ("mcmc-lightweight/runtime-aligned-cps.mc", compileAlignedCps options)
-    case (false,"none") then
+    case (false,"none",false) then
       ("mcmc-lightweight/runtime.mc", compile options)
-    case (false,_) then
+    case (false,_,false) then
       -- TODO(2023-05-17,dlunde): Currently the same as non-CPS. Switch to
       -- CPS-version when implemented.
       ("mcmc-lightweight/runtime.mc", compile options)
+    case (_,_,true) then
+      ("mcmc-lightweight/runtime-tempered.mc", compileTempered options)
   end

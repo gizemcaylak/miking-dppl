@@ -32,6 +32,9 @@ type Options = {
   -- Prune algorithm
   prune: Bool,
 
+  -- Tempering
+  temper: Bool,
+
   -- Where to resample in SMC
   resample: String,
 
@@ -97,6 +100,7 @@ let default = {
   staticDelay = false,
   dynamicDelay = false,
   prune = false,
+  temper = false,
   printSamples = true,
   stackSize = 10000,
   cps = "full",
@@ -187,6 +191,10 @@ let config = [
     "The model is pruned if possible.",
     lam p: ArgPart Options.
       let o: Options = p.options in {o with prune = true}),
+  ([("--temper", "", "")],
+    "The model is pruned if possible.",
+    lam p: ArgPart Options.
+      let o: Options = p.options in {o with temper = true}),
   ([("--no-print-samples", "", "")],
     "Do not print the final samples in the compiled program.",
     lam p: ArgPart Options.
