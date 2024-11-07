@@ -151,18 +151,16 @@ let run : all a. Unknown -> (State -> a) -> use RuntimeDistBase in Dist a =
   lam config. lam model.
   use RuntimeDist in
 
-  let logPotential = lam beta.
-    modref state.weight 0.;
-    modref state.priorWeight 0.;
-    let sample = model state in
+  let logPotential = lam sample. lam beta.
     let weight = deref state.weight in
     let priorWeight = deref state.priorWeight in
     let weight = mulf weight beta in
     let logPotential = addf priorWeight weight in
-    writeString stdout (join ["response(", (float2string logPotential), ")\n"])
+    print (join ["response(", (float2string logPotential), ")\n"]);
+    flushStdout ()
     in
 
-  let callSampler = lam weights. lam samples. lam beta.
+  let sampleModel = lam weights. lam samples.
         let prevDb = deref state.db in
         let prevSample = head samples in
         let prevTraceLength = deref state.traceLength in
@@ -175,21 +173,26 @@ let run : all a. Unknown -> (State -> a) -> use RuntimeDistBase in Dist a =
         modref state.traceLength 0;
         modref state.priorWeight 0.;
         let sample = model state in
+        (sample, prevDb, prevSample, prevTraceLength, prevWeight) in
+
+  let callSampler = lam sampledModel. lam beta.
+        match sampledModel with (sample, prevDb, prevSample, prevTraceLength, prevWeight) in
         let traceLength = deref state.traceLength in
         let weight = deref state.weight in
         let weightReused = deref state.weightReused in
         let prevWeightReused = deref state.prevWeightReused in
-        let priorWeight = deref state.priorWeight in
-        let weight = mulf weight beta in
+     --   
         let logMhAcceptProb =
           minf 0. (addf (addf
                     (subf weight prevWeight)
                     (subf weightReused prevWeightReused))
                     (subf (log (int2float prevTraceLength))
                               (log (int2float traceLength)))) in
-        writeString stdout "response()";
-        if bernoulliSample (exp logMhAcceptProb) then
-          mcmcAccept ();
+        print "response()\n";
+        flushStdout ();
+       -- let weight = mulf weight beta in
+        if bernoulliSample (exp (mulf beta (logMhAcceptProb))) then
+            mcmcAccept ();
             (weight,sample)
         else
           -- NOTE(dlunde,2022-10-06): VERY IMPORTANT: Restore previous database
@@ -199,20 +202,26 @@ let run : all a. Unknown -> (State -> a) -> use RuntimeDistBase in Dist a =
             (prevWeight, prevSample) in
 
     recursive let mh = lam weights. lam samples.
-      match readLine stdin with Some s then
-        if strStartsWith "LOG_POTENTIAL_CODE" s then
+      setSeed (string2int (get argv 1));
+      let sampledModel = sampleModel weights samples in
+      recursive let pigeonsIO = lam sampledModel. lam weights. lam samples.
+        match externalReadLine externalStdin with (s, _) then
+        if strStartsWith "log_potential" s then
           let str = get (strSplit "(" s) 1 in
-          let beta = string2float (strReplace ")" "" str) in
-          logPotential beta; mh weights samples
-        else if strStartsWith "CALL_SAMPLER_CODE" s then
-          let str = get (strSplit "(" s) 1 in
-          let beta = string2float (strReplace ")" "" str) in
-          match (callSampler weights samples beta) with (weight, sample) in
-          let weights = cons weight weights in
-          let samples = cons sample samples in
-          mh weights samples
-        else (weights, samples)
-      else (weights, samples) in
+          let beta = (string2float (strReplace ")" "" str)) in
+          logPotential sampledModel.0 beta; pigeonsIO sampledModel weights samples
+        else if strStartsWith "call_sampler!" s then
+            let str = get (strSplit "(" s) 1 in
+            let beta = (string2float (strReplace ")" "" str)) in
+            --print (float2string beta);
+            match (callSampler sampledModel beta) with (weight, sample) in
+            let weightsx = cons weight weights in
+            let samplesx = cons sample samples in
+            mh weightsx samplesx
+          else (weights, samples)
+        else (weights, samples) in
+      pigeonsIO sampledModel weights samples in
+
 
 
   let runs = config.iterations in

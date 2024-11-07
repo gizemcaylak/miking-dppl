@@ -25,6 +25,7 @@ let run : all a. Unknown -> (State -> a) -> use RuntimeDistBase in Dist a =
       else
         let state: State = ref 0. in
         let sample: a = model state in
+        print (join ["sample:",float2string (unsafeCoerce sample),"\n"]);
         let weight: Float = deref state in
         let prevWeight: Float = head weights in
         let prevSample: a = head samples in
