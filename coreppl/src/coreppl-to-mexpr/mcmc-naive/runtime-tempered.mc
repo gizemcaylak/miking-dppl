@@ -36,64 +36,65 @@ let run : all a. Unknown -> (State -> a) -> use RuntimeDistBase in Dist a =
   lam config. lam model.
   use RuntimeDist in
 
-  let logPotential = lam sample. lam beta.
-    let weight = deref state.weight in
+  let logPotential = lam sample. lam weight. lam priorWeight. lam beta.
+    /-let weight = deref state.weight in
     let priorWeight = deref state.priorWeight in
     print (join ["weight:", (float2string weight),"\n"]);
     print (join ["sample:", (float2string (unsafeCoerce sample)),"\n"]);
     print (join ["priorWeight:", (float2string priorWeight),"\n"]);
-
+-/
     let weight = mulf weight beta in
     let logPotential = addf weight priorWeight  in
-    print (join ["log_potential(",(float2string beta),")=", (float2string logPotential),"\n\n"]);
+  --  print (join ["log_potential(",(float2string beta),")=", (float2string logPotential),"\n\n"]);
     print (join ["response(", (float2string logPotential), ")\n"]);
     flushStdout ()
   in
 
-  let callSampler = lam weights. lam samples. lam beta.
+  let callSampler = lam weights. lam samples. lam priorWeights. lam beta.
     modref state.weight 0.;
     modref state.priorWeight 0.;
     let sample = model state in
     let weight = deref state.weight in
-
+    let priorWeight = deref state.priorWeight in
     if null weights then 
         mcmcAccept ();
-        (weight,sample)
+        (weight,sample,priorWeight)
     else 
       let prevWeight = head weights in
       let prevSample = head samples in
+      let prevPriorWeight = head priorWeights in
       let logMhAcceptProb: Float = minf 0. (mulf beta (subf weight prevWeight)) in
       if bernoulliSample (exp logMhAcceptProb) then
           mcmcAccept ();
-          (weight, sample)
+          (weight, sample, priorWeight)
       else
-          (prevWeight, prevSample)
+          (prevWeight, prevSample, prevPriorWeight)
   in
 
-  recursive let mh = lam weights. lam samples. 
+  recursive let mh = lam weights. lam samples. lam priorWeights. 
       match externalReadLine externalStdin with (s, false) then
         -- if we read log_potential(beta), call it to calculate 
         if strStartsWith "log_potential" s then
           let str = get (strSplit "(" s) 1 in
         --  print (join ["log_potential_beta:", str,"\n"]);
           let beta = (string2float (strReplace ")" "" str)) in
-         print (join ["log_potential(", float2string beta,")","\n"]);
-          logPotential (head samples) beta;
-          mh weights samples
+         --print (join ["log_potential(", float2string beta,")","\n"]);
+          logPotential (head samples) (head weights) (head priorWeights) beta;
+          mh weights samples priorWeights
         -- if we read call_sampler!(beta), we call the sampler to sample a new value based on the 
         -- given beta 
         else if strStartsWith "call_sampler!" s then
           let str = get (strSplit "(" s) 1 in
          -- print (join ["call_sampler_beta:", str,"\n"]);
           let beta = (string2float (strReplace ")" "" str)) in
-          print (join ["call_sampler(", float2string beta,")\n\n"]);
-          match (callSampler weights samples beta) with (weight, sample) in
+          --print (join ["call_sampler(", float2string beta,")\n\n"]);
+          match (callSampler weights samples priorWeights beta) with (weight, sample, priorWeight) in
 
           print "response()\n";
           flushStdout ();
-          mh (cons weight weights) (cons sample samples)
-        else (weights, samples)
-    else (weights, samples)
+          mh (cons weight weights) (cons sample samples) (cons priorWeight priorWeights)
+        else (weights, samples, priorWeights)
+    else (weights, samples, priorWeights)
   in
 
   let runs = config.iterations in
@@ -102,10 +103,10 @@ let run : all a. Unknown -> (State -> a) -> use RuntimeDistBase in Dist a =
   mcmcAcceptInit runs;
 
   
-  let res = mh [] [] in
+  let res = mh [] [] [] in
 
   -- Reverse to get the correct order
-  let res = match res with (weights,samples) in
+  let res = match res with (weights,samples,_) in
     (reverse weights, reverse samples)
   in
 
