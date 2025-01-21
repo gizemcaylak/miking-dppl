@@ -10,5 +10,6 @@ include "data-simple.mc"
 include "lda.mc"
 
 mexpr
+-- model ()
 let res = model () in
 strJoin " " (map (lam t. float2string (get t 0)) res)
