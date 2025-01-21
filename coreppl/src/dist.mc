@@ -8,6 +8,7 @@ include "mexpr/anf.mc"
 include "mexpr/type-lift.mc"
 include "mexpr/const-arity.mc"
 include "mexpr/const-types.mc"
+include "mexpr/json-debug.mc"
 
 include "peval/peval.mc"
 
