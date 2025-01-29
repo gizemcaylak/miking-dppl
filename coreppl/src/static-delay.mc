@@ -1348,10 +1348,10 @@ lang StaticDelay = CreatePBN + TransformPBN + RecreateProg
     smap_Expr_Expr transformLam res
   | t -> smap_Expr_Expr transformLam t
 
-  sem transform: Expr -> Expr
-  sem transform =
+  sem transformStaticDelay: Expr -> Expr
+  sem transformStaticDelay =
   | prog -> transformModel (transformLam prog)
 end
 
 let staticDelay = lam prog. use StaticDelay in
-  transform prog
+  transformStaticDelay prog

@@ -2,13 +2,14 @@ include "../dists.mc"
 include "../inference-interface.mc"
 include "../../inference/smc.mc"
 include "../../cfa.mc"
+include "../pruning/compile.mc"
 include "mexpr/ast-builder.mc"
 include "mexpr/cps.mc"
 include "mexpr/phase-stats.mc"
 
 lang MExprPPLBPF =
   MExprPPL + Resample + TransformDist + MExprCPS + MExprANFAll + MExprPPLCFA + PhaseStats
-  + SMCCommon + InferenceInterface
+  + SMCCommon + InferenceInterface + DPPLPruning
 
   sem transformStopFirstAssume: InferenceSymEnv -> Expr -> Option Expr
   sem transformStopFirstAssume env =
@@ -103,6 +104,7 @@ lang MExprPPLBPF =
     -- match pprintCode 0 env t with (env,str) in
     -- printLn (str);
 
+    let t = if x.options.prune then prune t else t in
     -- Attempt to identify and stop at first assume to potentially reuse
     -- previous empirical distribution (see runtime)
     let t =

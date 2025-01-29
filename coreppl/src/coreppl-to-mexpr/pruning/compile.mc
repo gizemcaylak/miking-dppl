@@ -3,38 +3,18 @@ include "mexpr/externals.mc"
 include "../../parser.mc"
 include "../dists.mc"
 
+-- need to have a dist environment
 -- ANF for pruning --
-lang MExprPPLPruningANF = MExprPPL + DPPLParser + Externals + MExprANFAll
+lang MExprPPLPruningCPS = MExprPPL + DPPLParser + MExprCPS
   -- specialized normalize for assume and observe, cancel observe and prunes
-  sem normalize (k:Expr -> Expr) =
-  | TmAssume ({ dist = TmDist ({ dist = dist } & td) } & t) ->
-    normalizeDist
-      (lam dist. k (TmAssume { t with dist = TmDist { td with dist = dist } }))
-      dist
-  | TmPrune ({ dist = TmDist ({ dist = dist } & td) } & t) ->
-    normalizeDist
-      (lam dist. k (TmPrune { t with dist = TmDist { td with dist = dist } }))
-      dist
-  | TmPruned ({ prune = TmPrune ({ dist = dist } & td) } & t) ->
-    (TmPruned { t with prune = normalize k (TmPrune td) })
-  | TmObserve ({ value = value, dist = TmDist ({ dist = dist } & td) } & t) ->
-    normalizeName
-      (lam value.
-        normalizeDist
-          (lam dist.
-             k (TmObserve {{ t with value = value }
-                               with dist = TmDist { td with dist = dist}}))
-          dist)
-      value
-  | TmCancel ({ value = value, dist = TmDist ({ dist = dist } & td) } & t) ->
-    normalizeName
-      (lam value.
-        normalizeDist
-          (lam dist.
-             k (TmCancel {{ t with value = value }
-                               with dist = TmDist { td with dist = dist}}))
-          dist)
-      value
+  
+  sem exprCps env k =
+  | TmLet ({ body = TmCancel _ } & t) ->
+    TmLet { t with inexpr = exprCps env k t.inexpr }
+  | TmLet ({ body = TmPrune _ } & t) ->
+    TmLet { t with inexpr = exprCps env k t.inexpr }
+  | TmLet ({ body = TmPruned _ } & t) ->
+    TmLet { t with inexpr = exprCps env k t.inexpr }
  end
 
  lang TransformPruningDist = TransformDist + MExprPPL +DPPLParser
@@ -66,6 +46,13 @@ lang MExprPPLPruningANF = MExprPPL + DPPLParser + Externals + MExprANFAll
       createEnvParam pruneEnv t.inexpr
   | t -> sfold_Expr_Expr createEnvParam pruneEnv t
 
+  sem createEnvDist: Map Name Expr -> Expr -> Map Name Expr
+  sem createEnvDist distEnv =
+  | TmLet ({body=TmDist ({dist=DCategorical _}&d)}&t) -> 
+    createEnvDist (mapInsert t.ident t.body distEnv) t.inexpr
+  | t -> sfold_Expr_Expr createEnvDist distEnv t
+
+
   sem createEnvValue: Map Name EnvValue -> Expr -> Map Name EnvValue
   sem createEnvValue env =
   | TmLet t -> let env = match tyTm (t.body) with TyInt _ then
@@ -76,10 +63,10 @@ lang MExprPPLPruningANF = MExprPPL + DPPLParser + Externals + MExprANFAll
         createEnvValue (createEnvValue env t.body) t.inexpr
   | t -> sfold_Expr_Expr createEnvValue env t
 
-  sem extractParam: Map Name EnvParam -> Expr -> Expr
   sem extractParam env =
-  | TmDist ({dist=DCategorical ({p=p}&d)}&t)->
-    match assignCons env p with Some x then x else (conapp_ "PruneGraph_SeqFParam" p)
+  | TmVar ({ident=id}&v) ->
+    match mapLookup id env.distEnv with Some (TmDist ({dist=DCategorical ({p=p}&d)}&t)) in
+    match assignCons env.env p with Some x then x else (conapp_ "PruneGraph_SeqFParam" p)
 
   sem assignValueCons: (Map Name EnvValue) -> Expr -> Option Expr
   sem assignValueCons env =
@@ -118,41 +105,83 @@ lang DPPLPruningTransform = TransformPruningDist
     prunedEnv:Map Name Expr,
     prunedFEnv:Map Name Expr,
     valueEnv:Map Name EnvValue,
-    env:Map Name EnvParam
+    env:Map Name EnvParam,
+    distEnv:Map Name Expr
   }
 
-  sem replaceTyPruneInt =
+  --TODO: this needs a better way
+  sem clearDists prunedFEnv =
+  | TmDist ({dist=DCategorical {p=TmVar p}}&t)-> 
+    match mapLookup p.ident prunedFEnv with Some _ then unit_
+    else TmDist t
+  | t -> smap_Expr_Expr (clearDists prunedFEnv) t
+  
+  sem replacePruneTypes =
   | t ->
-    let t = smap_Expr_Type toRuntimeTyPruneVar t in
-    let t = smap_Expr_TypeLabel toRuntimeTyPruneVar t in
-    let t = smap_Expr_Pat replaceTyPruneVarPat t in
-    let t = smap_Expr_Expr replaceTyPruneInt t in
-    withType (toRuntimeTyPruneVar (tyTm t)) t
+    let t = smap_Expr_Type toRuntimePruneTyVar t in
+    let t = smap_Expr_TypeLabel toRuntimePruneTyVar t in
+    let t = smap_Expr_Pat replacePruneTyVarPat t in
+    let t = smap_Expr_Expr replacePruneTypes t in
+    withType (toRuntimePruneTyVar (tyTm t)) t
 
-  sem toRuntimeTyPruneVar : Type -> Type
-  sem toRuntimeTyPruneVar =
+  sem toRuntimePruneTyVar : Type -> Type
+  sem toRuntimePruneTyVar =
   | TyPruneInt t -> (tycon_ "PruneGraph_PruneVar")
-  | ty -> smap_Type_Type toRuntimeTyPruneVar ty
+  | ty -> smap_Type_Type toRuntimePruneTyVar ty
 
-  sem replaceTyPruneVarPat : Pat -> Pat
-  sem replaceTyPruneVarPat =
+  sem replacePruneTyVarPat : Pat -> Pat
+  sem replacePruneTyVarPat =
   | p ->
-    let p = smap_Pat_Pat replaceTyPruneVarPat p in
-    withTypePat (toRuntimeTyPruneVar (tyPat p)) p
+    let p = smap_Pat_Pat replacePruneTyVarPat p in
+    withTypePat (toRuntimePruneTyVar (tyPat p)) p
+
 
   sem checkValidPrune env =
-  | TmPrune {dist=TmDist {dist=DCategorical {p=p}}} ->
+  | TmPrune p ->
+    match p.dist with TmVar v in
+    match mapLookup v.ident env.distEnv with Some (TmDist {dist=DCategorical {p=p}}) in
     match p with TmVar v in
     match mapLookup v.ident env.prunedFEnv with Some _ then
       error "Distribution of a pruned variable cannot have a pruned parameter"
-    else ()
+    else p
+
+sem createEnvs env =
+  | TmLet ({body=TmPruned p} &t) ->
+    let prunedEnv = mapInsert t.ident p.prune env.prunedEnv in
+    (createEnvs {env with prunedEnv=prunedEnv} t.inexpr)
+  | TmLet ({body=TmApp ({lhs=TmVar v1, rhs=TmVar v2}&a)} & t) ->
+    match mapLookup v2.ident env.prunedFEnv with Some _ then
+      error "Pruned variable shouldn't be applied as an argument anywhere than to a distribution"
+    else match mapLookup v1.ident env.prunedFEnv with Some body then
+      match mapLookup v2.ident env.prunedEnv with Some prune then 
+        error "Cannot handle two pruned variable at the same time"
+      else
+        match body with TmApp ({lhs=TmApp ({lhs=_, rhs=TmLam l}&a2), rhs=_}&a1) in
+        let lamBody = TmApp {{a with lhs=l.body} with rhs=TmVar v2} in
+        let tbody = match inspectType (tyTm (t.body)) with TyArrow _ then
+          nulam_ l.ident lamBody
+        else TmApp {a1 with lhs=TmApp {a2 with rhs=nulam_ l.ident lamBody}} in
+        let tbodye=TmApp {a1 with lhs=TmApp {a2 with rhs=nulam_ l.ident lamBody}} in
+        let prunedFEnv = mapInsert t.ident tbodye env.prunedFEnv in
+        (createEnvs {env with prunedFEnv=prunedFEnv} t.inexpr)
+    else
+    match mapLookup v2.ident env.prunedEnv with Some prune then
+        let lamId = nameSym "" in
+        let lamBody = TmApp {a with rhs=nvar_ lamId} in
+        let tbody = match inspectType (tyTm (t.body)) with TyArrow _ then
+          (nulam_ lamId lamBody)
+        else appf2_ (var_ "initializePruneFVar") (nulam_ lamId lamBody) prune in
+        let tbodyd = appf2_ (var_ "initializePruneFVar") (nulam_ lamId lamBody) prune in
+        let prunedFEnv = mapInsert t.ident tbodyd env.prunedFEnv in
+        (createEnvs {env with prunedFEnv=prunedFEnv} t.inexpr)
+    else
+      sfold_Expr_Expr createEnvs env (TmLet t)
+  | t -> sfold_Expr_Expr createEnvs env t
 
   sem replaceTmPrunes env =
-  | TmPrune p ->
-    checkValidPrune env (TmPrune p);
-    --let dst = transformTmDistDs env.env p.dist in
-    match p.dist with TmDist ({dist=DCategorical ({p=p}&d)}&t) in
-    appf1_ (var_ "initializePruneRVar") p
+  | TmLet ({body=TmPrune p} &t) ->
+    let param = checkValidPrune env (TmPrune p) in
+    TmLet {{t with body=appf1_ (var_ "initializePruneRVar") param} with inexpr = replaceTmPrunes env t.inexpr}
   | TmLet ({body=TmPruned p} &t) ->
     let prunedEnv = mapInsert t.ident p.prune env.prunedEnv in
     (replaceTmPrunes {env with prunedEnv=prunedEnv} t.inexpr)
@@ -183,29 +212,33 @@ lang DPPLPruningTransform = TransformPruningDist
         TmLet {{t with body = tbody} with inexpr=(replaceTmPrunes {env with prunedFEnv=prunedFEnv} t.inexpr)}
     else
       smap_Expr_Expr (replaceTmPrunes env) (TmLet t)
-  | TmAssume ({dist=TmDist ({dist=DCategorical d}&td)}&t) ->
-    if not (prunedObserve env (TmAssume t)) then (TmAssume t) else
+  | TmLet ({body=TmAssume t} &tl) ->
+    if not (prunedObserve env (TmAssume t)) then TmLet {tl with inexpr = replaceTmPrunes env tl.inexpr} else
       error "assume cannot take a pruned random variable"
-  | (TmObserve {value=TmVar v,dist=TmDist d} | TmCancel {value=TmVar v,dist=TmDist d}) & t ->
-    if not (prunedObserve env t) then t else
+  | TmLet ({body=(TmObserve {value=TmVar v,dist=dist} | TmCancel {value=TmVar v,dist=dist}) & t } &tl) ->
+    if not (prunedObserve env t) then TmLet tl else
       let value = match mapLookup v.ident env.prunedEnv with Some prune then prune else TmVar v in
       let value = match assignValueCons env.valueEnv value with Some x then x else error "wrong type at observe value field" in
-      let param = extractParam env.env (TmDist d) in
-      let wid = nameSym "w" in
+      let param = extractParam env dist in
+      let wId = nameSym "w" in
       let w = match t with TmObserve _ then
-        nulet_ wid (appf3_ (var_ "observePrune") false_ value param) 
-      else nulet_ wid (appf3_ (var_ "observePrune") true_ value param) in
-      bind_ w (ulet_ "" (weight_ (nvar_ wid)))
+        nulet_ wId (appf3_ (var_ "observePrune") false_ value param) 
+      else nulet_ wId (appf3_ (var_ "observePrune") true_ value param) in
+      TmLet {{tl with body = bind_ w (ulet_ "" (weight_ (nvar_ wId)))} with inexpr=(replaceTmPrunes env tl.inexpr)}
   | t -> smap_Expr_Expr (replaceTmPrunes env) t
 
   sem prunedObserve env =
-  | (TmObserve {value=TmVar v,dist=TmDist {dist=DCategorical d}} | TmCancel {value=TmVar v,dist=TmDist {dist=DCategorical d}}) & t  ->
-      match mapLookup v.ident env.prunedEnv with Some _ then true else
-      match d.p with TmVar v2 in
-      match mapLookup v2.ident env.prunedFEnv with Some _ then true else false
-  | TmAssume {dist=TmDist {dist=DCategorical d}}  ->
-      match d.p with TmVar v2 in
-      match mapLookup v2.ident env.prunedFEnv with Some _ then true else false
+  | (TmObserve {value=TmVar v,dist=TmVar v2} | TmCancel {value=TmVar v,dist=TmVar v2}) & t  ->
+      match mapLookup v2.ident env.distEnv with Some (TmDist {dist=DCategorical d}) then
+        match mapLookup v.ident env.prunedEnv with Some _ then true else
+        match d.p with TmVar v2 in
+        match mapLookup v2.ident env.prunedFEnv with Some _ then true else false
+      else false
+  | TmAssume {dist=TmVar v2}  ->
+      match mapLookup v2.ident env.distEnv with Some (TmDist {dist=DCategorical d}) then
+        match d.p with TmVar v2 in
+        match mapLookup v2.ident env.prunedFEnv with Some _ then true else false
+      else false
   | _ -> false
 
   sem checkPrunes =
@@ -213,28 +246,24 @@ lang DPPLPruningTransform = TransformPruningDist
   | TmPruned _ -> error "should have been removed"
   | t -> smap_Expr_Expr checkPrunes t
 
-  sem removePrunes =
-  | TmPrune _ -> unit_
-  | TmPruned _ -> unit_
-  | t -> smap_Expr_Expr removePrunes t
 
  end
 
-lang DPPLPruning = DPPLPruningTransform
+lang DPPLPruning = DPPLPruningTransform + MExprPPLPruningCPS
   sem prune =
   | prog -> 
-    -- 1 -- apply ANF first
-    let prog = use MExprPPLPruningANF in normalizeTerm prog in
     -- 2 -- get the types for distribution parameters
     -- type environment for distributions
     let env = createEnvParam (mapEmpty nameCmp) prog in
+    let distEnv = createEnvDist (mapEmpty nameCmp) prog in
     let valueEnv = createEnvValue (mapEmpty nameCmp) prog in
-    -- 3 -- whenever you encounter with a PruneInt type replace it with runtime PruneVar type
-    let prog = replaceTyPruneInt prog in
     -- 4 -- whenever you encounter with a TmPrune change it to runtime variable PruneRVar
     -- 5 -- whenever you encounter with a TmPruned change it to runtime variable PruneFVar with a map in values
-    let prog = replaceTmPrunes {prunedEnv=(mapEmpty nameCmp),prunedFEnv=(mapEmpty nameCmp),valueEnv=valueEnv,env=env} prog in
+    match createEnvs {prunedFEnv=(mapEmpty nameCmp), prunedEnv=(mapEmpty nameCmp)} prog with ({prunedFEnv=prunedFEnv,prunedEnv=_}) in
+    let prog = replaceTmPrunes {prunedEnv=(mapEmpty nameCmp),prunedFEnv=(mapEmpty nameCmp),valueEnv=valueEnv,env=env,distEnv=distEnv} prog in
+    let prog = clearDists prunedFEnv prog in
     -- for debugging --
     checkPrunes prog;
+    let prog = use DPPLPruningTransform in replacePruneTypes prog in
     prog
 end

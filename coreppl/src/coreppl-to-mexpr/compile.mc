@@ -129,16 +129,6 @@ lang ODETransform = DPPLParser + MExprSubstitute + MExprFindSym + LoadRuntime
   | EFA r -> [r.add, r.smul, r.stepSize, r.n]
 end
 
-lang DPPLTransformCancel = DPPLParser
-  sem replaceCancel =
-  | (TmCancel t) ->
-    let i = withInfo t.info in
-    TmWeight { weight = negf_ (appf2_ (i (var_ "logObserve")) t.dist t.value),
-               info = t.info,
-               ty = t.ty}
-  | t -> smap_Expr_Expr replaceCancel t
-end
-
 lang DPPLDelayedReplace = DPPLParser
    sem replaceDelayKeywords =
    | TmDelay t -> TmAssume { dist = t.dist, ty = t.ty, info = t.info }
@@ -165,7 +155,42 @@ lang DPPLDelayedReplace = DPPLParser
   | p ->
     let p = smap_Pat_Pat replaceDelayTyVarPat p in
     withTypePat (toRuntimeDelayTyVar (tyPat p)) p
- end
+end
+
+lang DPPLPrunedReplace = DPPLKeywordReplace
+  sem replaceCancel env =
+  | (TmCancel t) ->
+    let i = withInfo t.info in
+    TmWeight { weight = negf_ (appf2_ (withInfo (infoTm tm) (_var env "logObserve"))
+ t.dist t.value),
+               info = t.info,
+               ty = t.ty}
+  | t -> smap_Expr_Expr (replaceCancel env) t
+
+  sem replacePrune =
+  | TmPrune t -> assume_ t.dist
+  | TmPruned t -> match t.prune with TmVar v then t.prune
+    else match t.prune with TmPrune t then assume_ t.dist else t.prune
+  | t -> smap_Expr_Expr replacePrune t
+
+  sem replacePruneTypes options =
+  | t ->
+    let t = smap_Expr_Type (toRuntimePruneTyVar options) t in
+    let t = smap_Expr_TypeLabel (toRuntimePruneTyVar options) t in
+    let t = smap_Expr_Pat (replacePruneTyVarPat options) t in
+    let t = smap_Expr_Expr (replacePruneTypes options) t in
+    withType (toRuntimePruneTyVar options (tyTm t)) t
+
+  sem toRuntimePruneTyVar options =
+  | TyPruneInt t -> if options.prune then (tycon_ "PruneGraph_PruneVar")
+         else TyInt {info=t.info}
+  | ty -> smap_Type_Type (toRuntimePruneTyVar options) ty
+
+  sem replacePruneTyVarPat options =
+  | p ->
+    let p = smap_Pat_Pat (replacePruneTyVarPat options) p in
+    withTypePat (toRuntimePruneTyVar options (tyPat p)) p
+end
 
 lang ADTransform =
   DPPLParser +
@@ -384,11 +409,11 @@ lang ReplaceHigherOrderConstantsLoadedPreviously = ReplaceHigherOrderConstants +
     else tm
 end
 
-lang CompileModels = ReplaceHigherOrderConstants + DPPLDelayedSampling + DPPLPruning + PhaseStats + LoadRuntime + DPPLDelayedReplace + DPPLTransformCancel + MExprANFAll + DPPLExtract + InferenceInterface
+lang CompileModels = ReplaceHigherOrderConstants + DPPLDelayedSampling + PhaseStats + LoadRuntime + DPPLDelayedReplace + MExprANFAll + DPPLExtract + InferenceInterface
   sem compileModels
     : Options
     -> Map Name FinalOrderedLamLiftSolution
-    -> {higherOrderSymEnv : {path : String, env : SymEnv}, distEnv : {path : String, env : SymEnv}}
+    -> {higherOrderSymEnv : {path : String, env : SymEnv}, distEnv : {path : String, env : SymEnv}, pruneEnv : {path: String, env: SymEnv}, delayEnv: {path: String, env: SymEnv}}
     -> Map InferMethod {env : {path : String, env : SymEnv}, stateType : Type}
     -> Map Name ModelRepr
     -> Map Name Expr
@@ -420,7 +445,7 @@ lang CompileModels = ReplaceHigherOrderConstants + DPPLDelayedSampling + DPPLPru
         staticDelay modelAst
       else modelAst in
     -- Apply pruning to the model AST, if the flag is set
-    let ast =
+    /-let ast =
       if options.prune then
         prune ast
       else ast in
@@ -428,7 +453,7 @@ lang CompileModels = ReplaceHigherOrderConstants + DPPLDelayedSampling + DPPLPru
     let ast =
       if options.dynamicDelay then
         delayedSampling ast
-      else ast in
+      else ast in-/
     let ast = replaceDelayTypes (replaceDelayKeywords ast) in
     -- Optionally print the model AST
     (if options.printModel then
@@ -441,7 +466,7 @@ lang CompileModels = ReplaceHigherOrderConstants + DPPLDelayedSampling + DPPLPru
     : Options
     -> (InferenceInterface -> Expr)
     -> Map Name FinalOrderedLamLiftSolution
-    -> {higherOrderSymEnv : {path : String, env : SymEnv}, distEnv : {path : String, env : SymEnv}}
+    -> {higherOrderSymEnv : {path : String, env : SymEnv}, distEnv : {path : String, env : SymEnv}, pruneEnv : {path : String, env : SymEnv}, delayEnv : {path : String, env : SymEnv}}
     -> {env : {path : String, env : SymEnv}, stateType : Type}
     -> Name
     -> ModelRepr
@@ -466,6 +491,8 @@ lang CompileModels = ReplaceHigherOrderConstants + DPPLDelayedSampling + DPPLPru
       , options = options
       , runtime = {env = entry.env, lamliftSols = lamliftSols}
       , dists = {env = envs.distEnv, lamliftSols = lamliftSols}
+      , prune = {env = envs.pruneEnv, lamliftSols = lamliftSols}
+      , delay = {env = envs.delayEnv, lamliftSols = lamliftSols}
       , stateName = stateVarId
       } in
     let ast = compile interface in
@@ -533,8 +560,7 @@ lang CPPLLoader
   = MCoreLoader
   + ResolveType + SubstituteUnknown
   + LoadRuntime + ReplaceHigherOrderConstantsLoadedPreviously + CompileModels + InsertModels
-  + DPPLPruningTransform + DPPLTransformCancel
-  + ElementaryFunctionsTransform
+  + ElementaryFunctionsTransform + DPPLPrunedReplace
   + DPPLKeywordReplace + DPPLDelayedReplace + DPPLParser
   syn Hook =
   | CPPLHook
@@ -548,6 +574,8 @@ lang CPPLLoader
       { higherOrderSymEnv : {path : String, env : SymEnv}
       , distEnv : {path : String, env : SymEnv}
       , externalMathEnv : {path : String, env : SymEnv}
+      , pruneEnv : {path: String, env: SymEnv}
+      , delayEnv : {path: String, env: SymEnv}
       }
     , loader : Loader
     }
@@ -592,6 +620,7 @@ lang CPPLLoader
         -- NOTE(dlunde,2022-11-04): Emulating option type
         , ("seedIsSome", match options.seed with Some seed then bool_ true else bool_ false)
         , ("seed", match options.seed with Some seed then int_ seed else int_ 0)
+        , ("prune", bool_ options.prune)
         ]
       , ident = nameNoSym "compileOptions"
       , tyAnnot = tyunknown_
@@ -629,6 +658,14 @@ lang CPPLLoader
       , info = NoInfo ()
       } in
     let loader = _addDeclExn loader distAlias in
+    match
+      (if options.prune then
+        includeFileExn "." "coreppl::coreppl-to-mexpr/pruning/runtime.mc" loader
+      else ({env= _symEnvEmpty, path="<no-prune-runtime-loader>"}, loader)) with (pruneEnv, loader) in
+    match
+      (if options.dynamicDelay then
+        includeFileExn "." "coreppl::coreppl-to-mexpr/delayed-sampling/runtime.mc" loader
+      else ({env=_symEnvEmpty,path="<no-delay-runtime-loader>"}, loader)) with (delayEnv, loader) in
 
     { runtimes = runtimes
     , loader = loader
@@ -636,6 +673,8 @@ lang CPPLLoader
       { higherOrderSymEnv = symEnv
       , distEnv = distEnv
       , externalMathEnv = externalMathEnv
+      , pruneEnv = pruneEnv
+      , delayEnv = delayEnv
       }
     }
 
@@ -652,8 +691,7 @@ lang CPPLLoader
       if mapMem inferMethod (deref x.runtimes) then loader else
       match loadCompiler x.options inferMethod with (runtime, _) in
       match includeFileExn "." (join ["coreppl::coreppl-to-mexpr/", runtime]) loader with (symEnv, loader) in
-      let loader = (includeFileExn "." "coreppl::coreppl-to-mexpr/pruning/runtime.mc" loader).1 in
-      let loader = (includeFileExn "." "coreppl::coreppl-to-mexpr/delayed-sampling/runtime.mc" loader).1 in
+      
       let entry =
         let stateName = _getTyConExn "State" symEnv in
         let tcEnv = _getTCEnv loader in
@@ -673,6 +711,8 @@ lang CPPLLoader
     -> { higherOrderSymEnv : {path : String, env : SymEnv}
        , distEnv : {path : String, env : SymEnv}
        , externalMathEnv : {path : String, env : SymEnv}
+       , pruneEnv : {path : String, env : SymEnv}
+       , delayEnv : {path : String, env : SymEnv}
        }
     -> Map InferMethod {env : {path : String, env : SymEnv}, stateType : Type}
     -> Loader
@@ -686,11 +726,11 @@ lang CPPLLoader
     let runtimeRunNames = mapMap (lam entry. _getVarExn "run" entry.env) runtimes in
     match extractInfer options runtimeRunNames ast with (ast, lamliftSols, models) in
     endPhaseStats log "extract-infer" ast;
-    let models = compileModels options lamliftSols {higherOrderSymEnv = envs.higherOrderSymEnv, distEnv = envs.distEnv} runtimes models in
+    let models = compileModels options lamliftSols {higherOrderSymEnv = envs.higherOrderSymEnv, distEnv = envs.distEnv, pruneEnv = envs.pruneEnv, delayEnv = envs.delayEnv} runtimes models in
     let ast = mapPre_Expr_Expr (transformTmDist {env = envs.distEnv, lamliftSols = lamliftSols}) ast in
-    let ast = replaceCancel ast in
-    let ast = removePrunes ast in
-    let ast = replaceTyPruneInt ast in
+    let ast = replaceCancel envs.distEnv ast in
+    let ast = replacePrune ast in
+    let ast = replacePruneTypes options ast in
     let ast = replaceDelayKeywords ast in
     let ast = replaceDelayTypes ast in
     let ast = replaceDpplKeywords ast in
@@ -932,7 +972,7 @@ lang MExprCompile =
   MExprPPL + Resample + Externals + DPPLParser + DPPLExtract + LoadRuntime +
   StaticDelay + DPPLKeywordReplace + DPPLTransformDist + MExprSubstitute +
   MExprANFAll + CPPLBackcompat +
-  ODETransform + DPPLTransformCancel + DPPLPruning +
+  ODETransform + DPPLPrunedReplace +
   ElementaryFunctionsTransform + DPPLDelayedReplace + DPPLDelayedSampling
   + ReplaceHigherOrderConstantsLoadDirectly
   + CompileModels
