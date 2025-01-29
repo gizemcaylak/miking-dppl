@@ -27,7 +27,7 @@ include "ocaml/mcore.mc"
 lang CPPLLang = CorePPLFileTypeLoader
   + MExprAst + UtestLoader + MExprGenerateEq
   + MExprLowerNestedPatterns + MCoreCompileLang
-  + PhaseStats
+  + PhaseStats + MExprGeneratePprint
 
   -- Check if a CorePPL program uses infer
   sem hasInfer =
