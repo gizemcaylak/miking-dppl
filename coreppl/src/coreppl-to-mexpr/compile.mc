@@ -619,6 +619,8 @@ lang CPPLLoader
     let ast = removeMetaVarExpr ast in
     endPhaseStats log "remove-meta-var" ast;
     let runtimeRunNames = mapMap (lam entry. _getVarExn "run" entry.env) runtimes in
+    let ast = elementaryFunctionsTransformExpr (lam str. _getVarExn str envs.externalMathEnv) ast in
+    endPhaseStats log "elementary-functions-transform" ast;
     match extractInfer options runtimeRunNames ast with (ast, lamliftSols, models) in
     endPhaseStats log "extract-infer" ast;
     let models = compileModels options lamliftSols {higherOrderSymEnv = envs.higherOrderSymEnv, distEnv = envs.distEnv} runtimes models in
@@ -632,8 +634,6 @@ lang CPPLLoader
     endPhaseStats log "replace-all-the-things" ast;
     let ast = insertModels models ast in
     endPhaseStats log "insert-models" ast;
-    let ast = elementaryFunctionsTransformExpr (lam str. _getVarExn str envs.externalMathEnv) ast in
-    endPhaseStats log "elementary-functions-transform" ast;
     -- NOTE(vipa, 2024-12-06): Stuff happens with elementary functions
     -- here, I'm not quite sure if I need it
     ast
@@ -711,7 +711,7 @@ lang CorePPLFileTypeLoader = CPPLLoader + GeneratePprintLoader + MExprGeneratePp
       , tyAnnot = tyunknown_
       , tyBody = tyunknown_
       , body = TmInfer
-        { method = inferMethodFromOptions options options.method
+        { method = setRuns (nvar_ (_getVarExn "particles" topEnv)) (inferMethodFromOptions options options.method)
         , model = nvar_ modelName
         , ty = tyunknown_
         , info = NoInfo ()
