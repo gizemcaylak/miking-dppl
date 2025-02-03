@@ -237,12 +237,12 @@ lang ConjugatePrior = CorePPL + MExprAst + MExprPPL + PBNGraph
 
   sem changeParams: Name -> Dist -> Dist
   sem changeParams param =
-  | DBernoulli d -> DBernoulli {d with p=tupleproj_ 0 (nvar_ param)}
-  | DBeta d -> DBeta {{d with a=tupleproj_ 0 (nvar_ param) } with b=tupleproj_ 1 (nvar_ param) }
-  | DGaussian d -> DGaussian {{d with mu=tupleproj_ 0 (nvar_ param)} with sigma=tupleproj_ 1 (nvar_ param)}
-  | DCategorical d -> DCategorical {d with p=tupleproj_ 0 (nvar_ param)}
-  | DDirichlet d -> DDirichlet {d with a=tupleproj_ 0 (nvar_ param)}
-
+  | DBernoulli d -> DBernoulli {d with p=tupleproj_ 0 (withType (tytuple_ [tyfloat_]) (nvar_ param))}
+  | DBeta d -> DBeta {{d with a=tupleproj_ 0 (withType (tytuple_ [tyfloat_,tyfloat_]) (nvar_ param))} with b=tupleproj_ 1 (withType (tytuple_ [tyfloat_,tyfloat_]) (nvar_ param)) }
+  | DGaussian d -> DGaussian {{d with mu=tupleproj_ 0 (withType (tytuple_ [tyfloat_,tyfloat_]) (nvar_ param))} with sigma=tupleproj_ 1 (withType (tytuple_ [tyfloat_,tyfloat_]) (nvar_ param))}
+  | DCategorical d -> DCategorical {d with p=tupleproj_ 0 (withType (tytuple_ [tyseq_ tyfloat_]) (nvar_ param))}
+  | DDirichlet d -> DDirichlet {d with a=tupleproj_ 0 (withType (tytuple_ [tyseq_ tyfloat_]) (nvar_ param))}
+  
   -- given the likelihood, the prior and the observartion calculates the posterior
   -- (d1: likelihood, d2: prior)
   sem posterior sqrtName obs indices plateId meanSO =
