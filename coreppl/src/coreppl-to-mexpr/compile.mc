@@ -347,10 +347,17 @@ lang ReplaceHigherOrderConstantsLoadedPreviously = ReplaceHigherOrderConstants +
 end
 
 lang CompileModels = ReplaceHigherOrderConstants + PhaseStats + LoadRuntime + DPPLDelayedReplace + DPPLPrunedReplace + MExprANFAll + DPPLExtract + InferenceInterface + DPPLDelayedSampling
+  type CompileEnvs =
+    { higherOrderSymEnv : {path : String, env : SymEnv}
+    , distEnv : {path : String, env : SymEnv}
+    , pruneEnv : {path: String, env: SymEnv}
+    , delayEnv: {path: String, env: SymEnv}
+    , externalMathEnv : {path : String, env : SymEnv}
+    }
   sem compileModels
     : Options
     -> Map Name FinalOrderedLamLiftSolution
-    -> {higherOrderSymEnv : {path : String, env : SymEnv}, distEnv : {path : String, env : SymEnv}, pruneEnv : {path: String, env: SymEnv}, delayEnv: {path: String, env: SymEnv}}
+    -> CompileEnvs
     -> Map InferMethod {env : {path : String, env : SymEnv}, stateType : Type}
     -> Map Name ModelRepr
     -> Map Name Expr
@@ -373,13 +380,13 @@ lang CompileModels = ReplaceHigherOrderConstants + PhaseStats + LoadRuntime + DP
           error (join ["Runtime definition missing for (", methodStr, ")"]))
       models
 
-  sem transformModelAst : {higherOrderSymEnv : {path : String, env : SymEnv}, distEnv : {path : String, env : SymEnv}, pruneEnv : {path: String, env: SymEnv}, delayEnv: {path: String, env: SymEnv}} -> Options -> Expr -> Expr
+  sem transformModelAst : CompileEnvs -> Options -> Expr -> Expr
   sem transformModelAst envs options =
   | modelAst ->
     -- Transform the model AST, if the flag is set
     let ast =
       if options.staticDelay then
-        staticDelay modelAst
+        staticDelay (_getVarExn "externalSqrt" envs.externalMathEnv) modelAst
       else modelAst in
     -- Apply pruning to the model AST, if the flag is set
     let ast =
@@ -400,7 +407,7 @@ lang CompileModels = ReplaceHigherOrderConstants + PhaseStats + LoadRuntime + DP
     : Options
     -> (InferenceInterface -> Expr)
     -> Map Name FinalOrderedLamLiftSolution
-    -> {higherOrderSymEnv : {path : String, env : SymEnv}, distEnv : {path : String, env : SymEnv}, pruneEnv : {path : String, env : SymEnv}, delayEnv : {path : String, env : SymEnv}}
+    -> CompileEnvs
     -> {env : {path : String, env : SymEnv}, stateType : Type}
     -> Name
     -> ModelRepr
@@ -662,7 +669,7 @@ lang CPPLLoader
     endPhaseStats log "elementary-functions-transform" ast;
     match extractInfer options runtimeRunNames ast with (ast, lamliftSols, models) in
     endPhaseStats log "extract-infer" ast;
-    let models = compileModels options lamliftSols {higherOrderSymEnv = envs.higherOrderSymEnv, distEnv = envs.distEnv, pruneEnv = envs.pruneEnv, delayEnv = envs.delayEnv} runtimes models in
+    let models = compileModels options lamliftSols envs runtimes models in
     let ast = mapPre_Expr_Expr (transformTmDist {env = envs.distEnv, lamliftSols = lamliftSols}) ast in
     let ast = replaceCancel envs.distEnv ast in
     let ast = replacePrune ast in

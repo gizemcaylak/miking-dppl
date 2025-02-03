@@ -70,7 +70,7 @@ export NIX_LDFLAGS
 : |> ./make test coreppl/src/ode-solver-method.mc |>
 : |> ./make test coreppl/src/dppl-arg.mc |>
 : |> ./make test coreppl/src/coreppl-to-mexpr/runtimes.mc |>
-# : |> ./make test coreppl/test/coreppl-to-mexpr/static-delay/static-delay-tests.mc |>
+: |> ./make test coreppl/test/coreppl-to-mexpr/static-delay/static-delay-tests.mc |>
 : |> ./make test-cppl coreppl/test/coreppl-to-mexpr/infer/coin-iter.mc "build/cppl" |>
 : |> ./make test-cppl coreppl/test/coreppl-to-mexpr/infer/ssm.mc "build/cppl" |>
 : |> ./make test-cppl coreppl/test/coreppl-to-mexpr/infer/lda.mc "build/cppl" |>
