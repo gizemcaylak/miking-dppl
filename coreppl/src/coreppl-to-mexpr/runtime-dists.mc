@@ -69,6 +69,7 @@ end
 lang RuntimeDistElementary = RuntimeDistBase
   syn Dist a =
   | DistGamma {shape : Float, scale : Float}
+  | DistDiscreteGamma {shape : Float, scale : Float, n : Int}
   | DistExponential {rate : Float}
   | DistPoisson {lambda : Float}
   | DistBinomial {n : Int, p : Float}
@@ -86,6 +87,7 @@ lang RuntimeDistElementary = RuntimeDistBase
 
   sem sample =
   | DistGamma t -> unsafeCoerce (gammaSample t.shape t.scale)
+  | DistDiscreteGamma t -> let x = unsafeCoerce (discreteGammaSample t.shape t.scale t.n) in print (float2string x); unsafeCoerce x
   | DistExponential t -> unsafeCoerce (exponentialSample t.rate)
   | DistPoisson t -> unsafeCoerce (poissonSample t.lambda)
   | DistBinomial t -> unsafeCoerce (binomialSample t.p t.n)
@@ -106,6 +108,8 @@ lang RuntimeDistElementary = RuntimeDistBase
   -- Expectation of primitive distributions over real values
   sem expectation =
   | DistGamma t -> unsafeCoerce (mulf t.shape t.scale)
+  | DistDiscreteGamma t ->
+    error "expectation undefined for the multinomial distribution"
   | DistExponential t -> unsafeCoerce (divf 1. t.rate)
   | DistPoisson t -> unsafeCoerce t.lambda
   | DistBinomial t -> unsafeCoerce (mulf t.p (int2float t.n))
@@ -123,6 +127,7 @@ lang RuntimeDistElementary = RuntimeDistBase
 
   sem logObserve =
   | DistGamma t -> unsafeCoerce (gammaLogPdf t.shape t.scale)
+  | DistDiscreteGamma t -> unsafeCoerce (discreteGammaLogPmf t.shape t.scale t.n)
   | DistExponential t -> unsafeCoerce (exponentialLogPdf t.rate)
   | DistPoisson t -> unsafeCoerce (poissonLogPmf t.lambda)
   | DistBinomial t -> unsafeCoerce (binomialLogPmf t.p t.n)

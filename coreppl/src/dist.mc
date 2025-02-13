@@ -339,6 +339,25 @@ lang GammaDist = Dist
   | DGamma _ -> "Gamma"
 end
 
+lang DiscreteGammaDist = Dist
+  syn Dist =
+  | DDiscreteGamma { k : Expr, theta : Expr, n : Expr }
+
+  sem smapAccumL_Dist_Expr f acc =
+  | DDiscreteGamma t ->
+    match f acc t.k with (acc, k) in
+    match f acc t.theta with (acc, theta) in
+    match f acc t.n with (acc, n) in
+    (acc, DDiscreteGamma { t with k = k, theta = theta, n = n })
+
+  sem distTy info =
+  | DDiscreteGamma _ ->
+    let f = ityfloat_ info in ([], [f, f, ityint_ info], f)
+
+  sem distName =
+  | DDiscreteGamma _ -> "DiscreteGamma"
+end
+
 -- DCategorical {p=p} is equivalent to DMultinomial {n=1, p=p}
 lang CategoricalDist = Dist
   syn Dist =
@@ -517,6 +536,9 @@ let beta_ = use BetaDist in
 let gamma_ = use GammaDist in
   lam k. lam theta. dist_ (DGamma {k = k, theta = theta})
 
+let discreteGamma_ = use DiscreteGammaDist in
+  lam k. lam theta. lam n. dist_ (DDiscreteGamma {k = k, theta = theta, n = n})
+
 let categorical_ = use CategoricalDist in
   lam p. dist_ (DCategorical {p = p})
 
@@ -545,7 +567,7 @@ let wiener_ = use WienerDist in dist_ (DWiener { cps = false, a = unit_ })
 ---------------------------
 
 lang DistAll =
-  UniformDist + BernoulliDist + PoissonDist + BetaDist + GammaDist +
+  UniformDist + BernoulliDist + PoissonDist + BetaDist + GammaDist + DiscreteGammaDist +
   CategoricalDist + MultinomialDist + DirichletDist +  ExponentialDist +
   EmpiricalDist + GaussianDist + BinomialDist + WienerDist
 end
@@ -565,6 +587,7 @@ let tmBernoulli = bern_ (float_ 0.5) in
 let tmPoisson = poisson_ (float_ 0.5) in
 let tmBeta = beta_ (float_ 1.0) (float_ 2.0) in
 let tmGamma = gamma_ (float_ 1.0) (float_ 2.0) in
+let tmDiscreteGamma = discreteGamma_ (float_ 1.0) (float_ 2.0) (int_ 4) in
 let tmCategorical =
   categorical_ (seq_ [float_ 0.3, float_ 0.2, float_ 0.5]) in
 let tmMultinomial =
@@ -601,6 +624,10 @@ utest mexprToString tmBeta with strJoin "\n" [
 
 utest mexprToString tmGamma with strJoin "\n" [
   "Gamma 1. 2."
+] using eqString in
+
+utest mexprToString tmDiscreteGamma with strJoin "\n" [
+  "DiscreteGamma 1. 2. 4"
 ] using eqString in
 
 utest mexprToString tmCategorical with strJoin "\n" [
@@ -653,6 +680,9 @@ utest eqExpr tmBeta (beta_ (float_ 1.0) (float_ 1.0)) with false in
 
 utest tmGamma with tmGamma using eqExpr in
 utest eqExpr tmGamma (gamma_ (float_ 1.0) (float_ 1.0)) with false in
+
+utest tmDiscreteGamma with tmDiscreteGamma using eqExpr in
+utest eqExpr tmDiscreteGamma (discreteGamma_ (float_ 1.0) (float_ 1.0) (int_ 5)) with false in
 
 utest tmCategorical with tmCategorical using eqExpr in
 utest eqExpr tmCategorical
@@ -725,6 +755,10 @@ utest smap_Expr_Expr mapVar tmGamma with gamma_ tmVar tmVar using eqExpr in
 utest sfold_Expr_Expr foldToSeq [] tmGamma
 with [ float_ 2.0, float_ 1.0 ] using eqSeq eqExpr in
 
+utest smap_Expr_Expr mapVar tmDiscreteGamma with discreteGamma_ tmVar tmVar tmVar using eqExpr in
+utest sfold_Expr_Expr foldToSeq [] tmDiscreteGamma
+with [ int_ 4, float_ 2.0, float_ 1.0] using eqSeq eqExpr in
+
 utest smap_Expr_Expr mapVar tmCategorical with categorical_ tmVar using eqExpr in
 utest sfold_Expr_Expr foldToSeq [] tmCategorical
 with [ seq_ [float_ 0.3, float_ 0.2, float_ 0.5] ] using eqSeq eqExpr in
@@ -765,6 +799,7 @@ utest symbolize tmBernoulli with tmBernoulli using eqExpr in
 utest symbolize tmPoisson with tmPoisson using eqExpr in
 utest symbolize tmBeta with tmBeta using eqExpr in
 utest symbolize tmGamma with tmGamma using eqExpr in
+utest symbolize tmDiscreteGamma with tmDiscreteGamma using eqExpr in
 utest symbolize tmCategorical with tmCategorical using eqExpr in
 utest symbolize tmMultinomial with tmMultinomial using eqExpr in
 utest symbolize tmExponential with tmExponential using eqExpr in
@@ -783,6 +818,7 @@ utest tyTm (typeCheck tmBernoulli) with tydist_ tybool_ using eqType in
 utest tyTm (typeCheck tmPoisson) with tydist_ tyint_ using eqType in
 utest tyTm (typeCheck tmBeta) with tydist_ tyfloat_ using eqType in
 utest tyTm (typeCheck tmGamma) with tydist_ tyfloat_ using eqType in
+utest tyTm (typeCheck tmDiscreteGamma) with tydist_ tyfloat_ using eqType in
 utest tyTm (typeCheck tmCategorical) with tydist_ tyint_ using eqType in
 utest tyTm (typeCheck tmMultinomial) with tydist_ (tyseq_ tyint_) using eqType in
 utest tyTm (typeCheck tmExponential) with tydist_ tyfloat_ using eqType in
@@ -807,6 +843,7 @@ utest _anf tmBernoulli with bind_ (ulet_ "t" tmBernoulli) (var_ "t") using eqExp
 utest _anf tmPoisson with bind_ (ulet_ "t" tmPoisson) (var_ "t") using eqExpr in
 utest _anf tmBeta with bind_ (ulet_ "t" tmBeta) (var_ "t") using eqExpr in
 utest _anf tmGamma with bind_ (ulet_ "t" tmGamma) (var_ "t") using eqExpr in
+utest _anf tmDiscreteGamma with bind_ (ulet_ "t" tmDiscreteGamma) (var_ "t") using eqExpr in
 utest _anf tmCategorical with bindall_ [
   ulet_ "t" (seq_ [float_ 0.3, float_ 0.2, float_ 0.5]),
   ulet_ "t1" (categorical_ (var_ "t")),
@@ -844,6 +881,7 @@ utest (typeLift tmBernoulli).1 with tmBernoulli using eqExpr in
 utest (typeLift tmPoisson).1 with tmPoisson using eqExpr in
 utest (typeLift tmBeta).1 with tmBeta using eqExpr in
 utest (typeLift tmGamma).1 with tmGamma using eqExpr in
+utest (typeLift tmDiscreteGamma).1 with tmDiscreteGamma using eqExpr in
 utest (typeLift tmCategorical).1 with tmCategorical using eqExpr in
 utest (typeLift tmMultinomial).1 with tmMultinomial using eqExpr in
 utest (typeLift tmExponential).1 with tmExponential using eqExpr in

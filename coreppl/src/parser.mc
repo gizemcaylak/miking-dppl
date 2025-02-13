@@ -134,6 +134,9 @@ lang DPPLParser =
   | "Gamma" -> Some (2, lam lst. TmDist {dist = DGamma {k = get lst 0, theta = get lst 1},
                                          ty = TyUnknown {info = info},
                                          info = info})
+  | "DiscreteGamma" -> Some (3, lam lst. TmDist {dist = DDiscreteGamma {k = get lst 0, theta = get lst 1, n = get lst 2},
+                                         ty = TyUnknown {info = info},
+                                         info = info})
   | "Categorical" -> Some (1, lam lst. TmDist {dist = DCategorical {p = get lst 0},
                                         ty = TyUnknown {info = info},
                                         info = info})

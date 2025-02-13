@@ -53,6 +53,9 @@ lang TransformDist = TransformDistBase + LiftedDist + InferenceInterface
   | DGamma { k = k, theta = theta } ->
     let cname = _getConExn "RuntimeDistElementary_DistGamma" env.env in
     i (nconapp_ cname (i (autoty_record_ [("shape", k), ("scale", theta)])))
+  | DDiscreteGamma { k = k, theta = theta, n = n } ->
+    let cname = _getConExn "RuntimeDistElementary_DistDiscreteGamma" env.env in
+    i (nconapp_ cname (i (autoty_record_ [("shape", k), ("scale", theta), ("n" , n)])))
   | DExponential { rate = rate } ->
     let cname = _getConExn "RuntimeDistElementary_DistExponential" env.env in
     i (nconapp_ cname (i (autoty_record_ [("rate", rate)])))
