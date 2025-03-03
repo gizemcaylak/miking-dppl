@@ -14,10 +14,14 @@ let zip = lam x. lam y.
   mapi (lam i. lam x. (x, get y i)) x 
 
 let matrixGet = lam row. lam col. lam tensor.
-  tensorGetExn tensor [row, col] 
+  tensorGetExn tensor [row, col]
 
-let ctmc = lam i. lam qt:Tensor[Float]. --lam t:Float.
-  [matrixGet i 0 qt,matrixGet i 1 qt,matrixGet i 2 qt,matrixGet i 3 qt] 
+let addSeq = lam seq1. lam seq2.
+  mapi (lam i. lam x. add x (get seq2 i)) seq1
+
+let ctmc = lam i. lam q:Tensor[Float]. lam t:Float.
+  let qt = (matrixExponential (matrixMulFloat t q)) in
+  [matrixGet i 0 qt,matrixGet i 1 qt,matrixGet i 2 qt,matrixGet i 3 qt]
 
 let pickpair = lam n.
   let i = assume (UniformDiscrete 0 (subi n 1)) in
@@ -29,7 +33,7 @@ let iid = lam f. lam p. lam n.
   map f params
 
 recursive
-let cluster = lam q. lam trees. lam maxAge. lam seqLen. lam n.
+let cluster = lam q. lam trees. lam maxAge. lam seqLen. lam n. lam rs.
   if eqi n 1 then trees else
   let pairs = pickpair n in
   let leftChild = get trees pairs.0 in
@@ -39,30 +43,35 @@ let cluster = lam q. lam trees. lam maxAge. lam seqLen. lam n.
   let age = addf t maxAge in
 
   let seq = iid (lam p. assume (Categorical p)) [0.25,0.25,0.25,0.25] seqLen in
-  
   let leftChildAge = getAge leftChild in
   let rightChildAge = getAge rightChild in
-  let qtL = (matrixExponential (matrixMulFloat (subf age leftChildAge) q)) in
-  let qtR = (matrixExponential (matrixMulFloat (subf age rightChildAge) q)) in
- 
+  -- how to make this efficient? before matrix operations was outside of the loop
   iteri
   (lam i. lam site.
-    let p1 = ctmc site qtL in
+    let p1 = ctmc site q branchL in
+    /-let l_values = map (lam i. 
+      let ps = map (lam t. let branchL = mulf (subf age leftChildAge) t in
+                ctmc site q t) [g1,g2,g3,g4] in--how to get the different gamma values?needs to be hardcoded or distributions should provide domains if possible
+      let marg = foldl (lam acc. lam p. addSeq acc p) (head ps) (tail ps) in
+      map (lam e. mulf e 0.25) marg
+    ) [0,1,2,3] in
+    -/
     (match leftChild with Node _ then
       let lc = get (getNodeSeq leftChild) i in
       observe lc (Categorical p1);
       cancel (observe lc (Categorical [0.25,0.25,0.25,0.25]))
-    else 
+    else
       let lc = get (getLeafSeq leftChild) i in
       (if lti lc 4 then observe lc (Categorical p1)
         else ())
     );
-    let p2 = ctmc site qtR in
+    let branchL = mulf (subf age rightChildAge) (get rs site) in
+    let p2 = ctmc site q branchL in
     (match rightChild with Node _ then
       let rc = get (getNodeSeq rightChild) i in
       observe rc (Categorical p2);
       cancel (observe rc (Categorical [0.25,0.25,0.25,0.25]))
-    else 
+    else
       let rc = get (getLeafSeq rightChild) i in
       (if lti rc 4 then observe rc (Categorical p2)
         else ())
@@ -71,7 +80,7 @@ let cluster = lam q. lam trees. lam maxAge. lam seqLen. lam n.
   let min = mini pairs.0 pairs.1 in
   let max = maxi pairs.0 pairs.1 in
   let new_trees = join ([slice trees 0 min, slice trees (addi min 1) max, slice trees (addi max 1) n, [parent]]) in
-  cluster q new_trees age seqLen (subi n 1)
+  cluster q new_trees age seqLen (subi n 1) rs
 end
 
 let gtr = lam pi. lam ri. 
@@ -102,6 +111,9 @@ let gtr = lam pi. lam ri.
 let model = lam.
   let pi = assume (Dirichlet ([1.0, 1.0, 1.0, 1.0])) in
   let er = assume (Dirichlet [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]) in
-  let q = gtr pi er in 
-  let n = length trees in
-  cluster q trees 0.0 seqLength n
+  let q = gtr pi er in
+  let mAlpha = log 5.0 in
+  let sdAlpha = 0.587405 in
+  let alpha = assume (Gaussian mAlpha sdAlpha) in
+  let srs = create seqLength (lam. assume (DiscretizedGamma alpha alpha 4)) in
+  cluster q trees 0.0 seqLength (length trees) srs

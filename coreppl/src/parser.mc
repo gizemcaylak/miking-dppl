@@ -122,6 +122,9 @@ lang DPPLParser =
   | "Uniform" -> Some (2, lam lst. TmDist {dist = DUniform {a = get lst 0, b = get lst 1},
                                            ty = TyUnknown {info = info},
                                            info = info})
+  | "UniformDiscrete" -> Some (2, lam lst. TmDist {dist = DUniformDiscrete {a = get lst 0, b = get lst 1},
+                                           ty = TyUnknown {info = info},
+                                           info = info})
   | "Bernoulli" -> Some (1, lam lst. TmDist {dist = DBernoulli {p = get lst 0},
                                         ty = TyUnknown {info = info},
                                         info = info})
@@ -134,7 +137,7 @@ lang DPPLParser =
   | "Gamma" -> Some (2, lam lst. TmDist {dist = DGamma {k = get lst 0, theta = get lst 1},
                                          ty = TyUnknown {info = info},
                                          info = info})
-  | "DiscreteGamma" -> Some (3, lam lst. TmDist {dist = DDiscreteGamma {k = get lst 0, theta = get lst 1, n = get lst 2},
+  | "DiscretizedGamma" -> Some (3, lam lst. TmDist {dist = DDiscretizedGamma {k = get lst 0, theta = get lst 1, n = get lst 2},
                                          ty = TyUnknown {info = info},
                                          info = info})
   | "Categorical" -> Some (1, lam lst. TmDist {dist = DCategorical {p = get lst 0},

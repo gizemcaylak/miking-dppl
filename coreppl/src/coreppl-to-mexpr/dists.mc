@@ -53,8 +53,8 @@ lang TransformDist = TransformDistBase + LiftedDist + InferenceInterface
   | DGamma { k = k, theta = theta } ->
     let cname = _getConExn "RuntimeDistElementary_DistGamma" env.env in
     i (nconapp_ cname (i (autoty_record_ [("shape", k), ("scale", theta)])))
-  | DDiscreteGamma { k = k, theta = theta, n = n } ->
-    let cname = _getConExn "RuntimeDistElementary_DistDiscreteGamma" env.env in
+  | DDiscretizedGamma { k = k, theta = theta, n = n } ->
+    let cname = _getConExn "RuntimeDistElementary_DistDiscretizedGamma" env.env in
     i (nconapp_ cname (i (autoty_record_ [("shape", k), ("scale", theta), ("n" , n)])))
   | DExponential { rate = rate } ->
     let cname = _getConExn "RuntimeDistElementary_DistExponential" env.env in
@@ -85,6 +85,9 @@ lang TransformDist = TransformDistBase + LiftedDist + InferenceInterface
     i (nconapp_ cname (i (autoty_record_ [("p", p)])))
   | DUniform { a = a, b = b } ->
     let cname = _getConExn "RuntimeDistElementary_DistUniform" env.env in
+    i (nconapp_ cname (i (autoty_record_ [("a", a), ("b", b)])))
+  | DUniformDiscrete { a = a, b = b } ->
+    let cname = _getConExn "RuntimeDistElementary_DistUniformDiscrete" env.env in
     i (nconapp_ cname (i (autoty_record_ [("a", a), ("b", b)])))
   | DWiener { cps = cps, a = a } ->
     let cname = _getConExn "RuntimeDistElementary_DistWiener" env.env in

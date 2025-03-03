@@ -5,7 +5,10 @@ include "ext/dist-ext.mc"
 type Tree
 con Node : {age: Float, msg: [[Float]], left: Tree, right: Tree} -> Tree
 con Leaf : {age: Float, msg: [[Float]]} -> Tree
-
+let g1 = 0.0291
+let g2 = 0.2807
+let g3 = 0.9248
+let g4 = 2.7654
 let getAge = lam n. match n with Node r then r.age else match n with Leaf r then r.age else never
 let getMsg = lam n. match n with Leaf r then r.msg else match n with Node r then r.msg else never
 
@@ -14,7 +17,8 @@ let slice = lam seq. lam beg. lam mend.
 
 let matrixGet = lam row. lam col. lam tensor.
   tensorGetExn tensor [row, col]
-
+let addSeq = lam seq1. lam seq2.
+  mapi (lam i. lam x. addf x (get seq2 i)) seq1
 recursive
 let foldl2 =
   lam f. lam acc. lam seq1. lam seq2.
@@ -51,8 +55,9 @@ let getLogLikes = lam msg.
 let sapply = lam x. lam f.
   map f x
 
-let ctmc = lam i. lam qt:Tensor[Float]. 
-  [matrixGet i 0 qt,matrixGet i 1 qt,matrixGet i 2 qt,matrixGet i 3 qt] 
+let ctmc = lam i. lam q:Tensor[Float]. lam t:Float.
+  let qt = (matrixExponential (matrixMulFloat t q)) in
+  [matrixGet i 0 qt,matrixGet i 1 qt,matrixGet i 2 qt,matrixGet i 3 qt]
 
 recursive
 let buildForest =  lam data. lam forest:[Tree]. lam index. lam data_len. lam seq_len.
@@ -77,25 +82,48 @@ let cluster = lam q. lam trees:[Tree]. lam maxAge.
 
   let leftChildAge = getAge leftChild in
   let rightChildAge = getAge rightChild in
-  
-  let qtL = (matrixExponential (matrixMulFloat (subf age leftChildAge) q)) in
-  let qtR = (matrixExponential (matrixMulFloat (subf age rightChildAge) q)) in
+
+  -- solution to 3, here instead create qt for all different discrete gamma
+  --let branchL = map (lam g. mulf (subf age leftChildAge) g) gammaDomain in
+  --let qtLs = map (lam t. matrixExponential (matrixMulFloat t q)) branchLs in
+  ----let branchL = map (lam g. mulf (subf age rightChildAge) g) gammaDomain in
+  --let qtRs = map (lam t. matrixExponential (matrixMulFloat t q)) branchLs in
+  -- then later sample from uniform discrete to decide which qtl to get
+  -- let index = assume (uniformDiscrete 0 (subi (length gammaDomain) 1))
+  -- ctmc i (get qtLs index)
+  -- the problem is then how do we understand that we need to iterate over different values of index? prune index?
 
   let leftMsg = getMsg leftChild in
   let rightMsg = getMsg rightChild in
 
-  let l_values:[[Float]] = map (lam i. ctmc i qtL) [0,1,2,3] in
-  let r_values:[[Float]] = map (lam i. ctmc i qtR) [0,1,2,3] in
-
+  --let l_values:[[Float]] = map (lam i. ctmc i qtL) [0,1,2,3] in
+  --let r_values:[[Float]] = map (lam i. ctmc i qtR) [0,1,2,3] in
+  -- 1) get the all values of a discrete distribution
+  -- 2) being able to support pruning through functions e.g. 
+  -- Static analysis create a node: lam t. let branchL = mulf (subf age leftChildAge) t ,
+  -- 3) How to make matrix multiplication more efficient? create 4 different matrices and choose one 
   let node_msg = mapi (lam i. lam lc.
-    let left_in_msg = map (lam p. let t = foldl2 (lam acc. lam pi. lam lci. addf acc (mulf pi lci)) 0. p lc in t) l_values in
+    let l_values = map (lam i. 
+      let ps = map (lam t. let branchL = mulf (subf age leftChildAge) t in
+                ctmc i q branchL) [g1,g2,g3,g4] in--how to get the different gamma values?needs to be hardcoded or distributions should provide domains if possible
+      let marg = foldl (lam acc. lam p. addSeq acc p) (head ps) (tail ps) in
+      map (lam e. mulf e 0.25) marg
+    ) [0,1,2,3] in
+    let left_in_msg = map (lam p. foldl2 (lam acc. lam pi. lam lci. addf acc (mulf pi lci)) 0. p lc) l_values in
     (match leftChild with Node _ then
       let log_likes_left = getLogLikes lc in
       weight (negf (log_likes_left))
     else ());
-    
+
     let rc = get rightMsg i in
-     let right_in_msg  = map (lam p. let t = foldl2 (lam acc. lam pi. lam rci. addf acc (mulf pi rci)) 0. p rc in t) r_values in
+    let r_values = map (lam i.
+      let ps = map (lam t. let branchL = mulf (subf age rightChildAge) t in
+                ctmc i q branchL) [g1,g2,g3,g4] in--how to get the different gamma values?needs to be hardcoded or distributions should provide domains if possible
+      let marg = foldl (lam acc. lam p. addSeq acc p) (head ps) (tail ps) in
+      map (lam e. mulf e 0.25) marg
+    ) [0,1,2,3] in
+
+     let right_in_msg  = map (lam p. foldl2 (lam acc. lam pi. lam rci. addf acc (mulf pi rci)) 0. p rc ) r_values in
     (match rightChild with Node _ then
       let log_likes_right = getLogLikes rc in
       weight (negf (log_likes_right))
@@ -112,12 +140,12 @@ let cluster = lam q. lam trees:[Tree]. lam maxAge.
   cluster q new_trees age
 end
 
-let gtr = lam pi. lam ri. 
+let gtr = lam pi. lam ri.
   let p1r0 = (mulf (get pi 1) (get ri 0)) in
   let p2r1 = (mulf (get pi 2) (get ri 1)) in
   let p3r2 = (mulf (get pi 3) (get ri 2)) in
   let m11 = addf (addf p1r0 p2r1) p3r2 in
-  let scale1 = (mulf m11 (get pi 0)) in 
+  let scale1 = (mulf m11 (get pi 0)) in
   let p0r0 = (mulf (get pi 0) (get ri 0)) in
   let p2r3 = (mulf (get pi 2) (get ri 3)) in
   let p3r4 = (mulf (get pi 3) (get ri 4)) in
@@ -141,6 +169,10 @@ let model = lam.
   let pi = assume (Dirichlet ([1.0, 1.0, 1.0, 1.0])) in
   let er = assume (Dirichlet [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]) in
   let q = gtr pi er in 
+ /- let mAlpha = log 5.0 in
+  let sdAlpha = 0.587405 in
+  let alpha = assume (Gaussian mAlpha sdAlpha) in
+  let srs = create seqLength (lam. assume (DiscretizedGamma alpha alpha 4)) in -/
   let dataLen = length data in
   let trees:[Tree] = buildForest data [] 0 dataLen seqLength in
   cluster q trees 0.0
