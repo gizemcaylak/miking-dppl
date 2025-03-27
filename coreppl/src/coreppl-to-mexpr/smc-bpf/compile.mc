@@ -105,7 +105,7 @@ lang MExprPPLBPF =
     -- match pprintCode 0 env t with (env,str) in
     -- printLn (str);
 
-    let t = if x.options.prune then prune x.prune t else
+    let t = match x.options.prune with "scale" | "naive" then prune x.prune t else
       if x.options.dynamicDelay then delayedSampling x.delay t else t in
     -- Attempt to identify and stop at first assume to potentially reuse
     -- previous empirical distribution (see runtime)
