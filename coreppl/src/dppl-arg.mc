@@ -30,10 +30,13 @@ type Options = {
   dynamicDelay: Bool,
 
   -- Prune algorithm
-  prune: Bool,
+  prune: String,
 
   -- Where to resample in SMC
   resample: String,
+
+  -- Resampling frequency in SMC
+  freq: Float,
 
   -- Whether or not to use alignment (for certain inference algorithms)
   align: Bool,
@@ -81,6 +84,7 @@ let defaultArgs = {
   test = false,
   particles = 5000,
   resample = "manual",
+  freq = 0.7,
   align = false,
   printModel = false,
   printMCore = false,
@@ -92,7 +96,7 @@ let defaultArgs = {
   output = "out",
   staticDelay = false,
   dynamicDelay = false,
-  prune = false,
+  prune = "none",
   printSamples = true,
   cps = "full",
   earlyStop = true,
@@ -179,10 +183,10 @@ let config = [
     "Runs dynamic delayed sampling on the model.",
     lam p: ArgPart Options.
       let o: Options = p.options in {o with dynamicDelay = true}),
-  ([("--prune", "", "")],
-    "The model is pruned if possible.",
+  ([("--prune", " ", "<option>")],
+    join ["Configuration of prune transformation (only applicable to certain inference algorithms). The supported options are: none, naive, and scale. Default: ", defaultArgs.prune, "."],
     lam p: ArgPart Options.
-      let o: Options = p.options in {o with prune = true}),
+      let o: Options = p.options in {o with prune = argToString p}),
   ([("--no-print-samples", "", "")],
     "Do not print the final samples in the compiled program.",
     lam p: ArgPart Options.
@@ -248,7 +252,14 @@ let config = [
           "Floating point number which corresponds to the standard deviation (sigma) of the normal distribution that will be used for the automatic drift kernel. Default: ",
           float2string defaultArgs.driftScale, "."
       ],
-      lam p : ArgPart Options. let o : Options = p.options in {o with driftScale = argToFloatMin p 0. })
+      lam p : ArgPart Options. let o : Options = p.options in {o with driftScale = argToFloatMin p 0. }),
+
+  ([("--freq", " ", "<value>")],
+    join [
+          "Floating point number which corresponds to resampling frequency in SMC. Default: ",
+          float2string defaultArgs.freq, "."
+      ],
+      lam p : ArgPart Options. let o : Options = p.options in {o with freq = argToFloatMin p 0. })
 ]
 
 -- Menu

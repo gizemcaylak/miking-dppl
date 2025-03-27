@@ -116,7 +116,7 @@ lang DPPLPrunedReplace = DPPLKeywordReplace + SymGetters
     withType (toRuntimePruneTyVar env options (tyTm t)) t
 
   sem toRuntimePruneTyVar env options =
-  | TyPruneInt t -> if options.prune then ntycon_ (_getTyConExn "PruneGraph_PruneVar" env)
+  | TyPruneInt t -> match options.prune with "naive"|"scale" then ntycon_ (_getTyConExn "PruneGraph_PruneVar" env)
          else TyInt {info=t.info}
   | ty -> smap_Type_Type (toRuntimePruneTyVar env options) ty
 
@@ -225,7 +225,7 @@ lang CompileModels = ReplaceHigherOrderConstants + PhaseStats + LoadRuntime + DP
       else modelAst in
     -- Apply pruning to the model AST, if the flag is set
     let ast =
-      if options.prune then ast
+      match options.prune with "naive"|"scale" then ast
       else (replacePruneTypes envs.pruneEnv options (replacePrune ((replaceCancel envs.distEnv ast)))) in
     let ast =
       if options.dynamicDelay then ast
@@ -387,7 +387,7 @@ lang CPPLLoader
         -- NOTE(dlunde,2022-11-04): Emulating option type
         , ("seedIsSome", match options.seed with Some seed then bool_ true else bool_ false)
         , ("seed", match options.seed with Some seed then int_ seed else int_ 0)
-        , ("prune", bool_ options.prune)
+        , ("prune", str_ options.prune)
         , ("driftKernel", bool_ options.driftKernel)
         , ("driftScale", float_ options.driftScale)
         ]
@@ -429,8 +429,10 @@ lang CPPLLoader
     let loader = _addDeclExn loader distAlias in
 
     match
-      (if options.prune then
+      (match options.prune with "naive" then
         includeFileExn "." "coreppl::coreppl-to-mexpr/pruning/runtime.mc" loader
+      else match options.prune with "scale" then
+        includeFileExn "." "coreppl::coreppl-to-mexpr/pruning/runtime-scale.mc" loader
       else ({env= _symEnvEmpty, path="<no-prune-runtime-loader>"}, loader))
     with (pruneEnv, loader) in
     match
