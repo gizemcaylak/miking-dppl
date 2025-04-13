@@ -20,11 +20,11 @@ case "$dataset" in
         case "$model" in
             "jc")
                 echo "Model: jc"
-                python3.7 scripts/run-plot-transform-results-cppl.py coreppl/models/tree-inference/jc/ --modelN jc --datasetName toy --filename tree-inference  --lstP 100 1000 10000 --numruns 30
+                python3 scripts/run-plot-transform-results-cppl.py coreppl/models/tree-inference/jc/ --modelN jc --datasetName toy --filename tree-inference  --lstP 100 1000 10000 --numruns 30
                 ;;
             "gtr")
                 echo "Model: gtr"
-                python3.7 scripts/run-plot-transform-results-cppl.py coreppl/models/tree-inference/gtr/ --modelN gtr --datasetName toy --filename tree-inference-gtr --lstP 100 1000 10000 --numruns 30
+                python3 scripts/run-plot-transform-results-cppl.py coreppl/models/tree-inference/gtr/ --modelN gtr --datasetName toy --filename tree-inference-gtr --lstP 100 1000 10000 --numruns 30
                 ;;
             *)
                 echo "Invalid model specified"
@@ -38,11 +38,11 @@ case "$dataset" in
         case "$model" in
             "jc")
                 echo "Model: jc"
-                python3.7 scripts/run-plot-transform-results-cppl.py coreppl/models/tree-inference/jc/ --modelN jc --datasetName primates --filename tree-inference  --lstP 100 1000 10000 --numruns 30
+                python3 scripts/run-plot-transform-results-cppl.py coreppl/models/tree-inference/jc/ --modelN jc --datasetName primates --filename tree-inference  --lstP 100 1000 10000 --numruns 30
                 ;;
             "gtr")
                 echo "Model: gtr"
-                python3.7 scripts/run-plot-transform-results-cppl.py coreppl/models/tree-inference/gtr/ --modelN gtr --datasetName primates --filename tree-inference-gtr --lstP 100 1000 10000 --numruns 30
+                python3 scripts/run-plot-transform-results-cppl.py coreppl/models/tree-inference/gtr/ --modelN gtr --datasetName primates --filename tree-inference-gtr --lstP 100 1000 10000 --numruns 30
                 ;;
             *)
                 echo "Invalid model specified"
@@ -56,11 +56,11 @@ case "$dataset" in
         case "$model" in
             "jc")
                 echo "Model: jc"
-                python3.7 scripts/run-plot-transform-results-cppl.py coreppl/models/tree-inference/jc/ --modelN jc --datasetName M336 --filename tree-inference --lstP 100 1000 10000 --numruns 30
+                python3 scripts/run-plot-transform-results-cppl.py coreppl/models/tree-inference/jc/ --modelN jc --datasetName M336 --filename tree-inference --lstP 100 1000 10000 --numruns 30
                 ;;
             "gtr")
                 echo "Model: gtr"
-                python3.7 scripts/run-plot-transform-results-cppl.py coreppl/models/tree-inference/gtr/ --modelN gtr --datasetName M336 --filename tree-inference-gtr --lstP 100 1000 10000 --numruns 30
+                python3 scripts/run-plot-transform-results-cppl.py coreppl/models/tree-inference/gtr/ --modelN gtr --datasetName M336 --filename tree-inference-gtr --lstP 100 1000 10000 --numruns 30
                 ;;
             *)
                 echo "Invalid model specified"
