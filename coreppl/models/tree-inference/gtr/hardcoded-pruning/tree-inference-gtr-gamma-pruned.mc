@@ -59,9 +59,10 @@ let cluster = lam q. lam trees. lam maxAge. lam seqLen. lam n. lam pi. lam rs.
   let age = addf t maxAge in
   print "x\n";
   let domain = (get rs 0) in
+  iter (lam g. print (join [(float2string g),"\n"])) domain;
   let branchLs:[[Float]] = map (lam c.
     let t = (subf age (getAge c)) in
-    map (lam g. print (join [(float2string g),"\n"]);mulf t g) domain) children in  
+    map (lam g. mulf t g) domain) children in  
   
   let qts = map (lam cb:[Float]. map (lam t. matrixExponential (matrixMulFloat t q)) cb) branchLs in
 
