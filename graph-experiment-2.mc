@@ -153,40 +153,59 @@ lang PValInterface
     -> (PValState st, PVal a)
   sem p_assume_ st = | dist -> p_assume st (lam st. lam. st) dist
 
+  sem p_prune_ : all st. all a. PValState st
+    -> PVal (PDist a)
+    -> (PValState st, PVal a)
+  
+
+end
+
+let computeStrides = lam ds. let res = foldl (lam acc. lam d.
+    match acc with (accProd, accStrides) in (muli accProd d, cons accProd accStrides))
+  (1, []) (reverse ds) in res.1
+
+-- n in [0 .. prod(ds)-1] -> list of coords with length = length ds
+let linearToCoords = lam n. lam ds.
+  recursive let go = lam idx. lam dsp.
+    match dsp with [d]++dsTail then
+      let q  = divi idx d in
+      let r  = modi idx d in
+      cons r (go q dsTail)
+    else [] in go n ds 
+let coordsToLinear = lam cs. lam ss. foldl2 (lam acc. lam c. lam s. addi acc (muli c s)) 0 cs ss
+
+lang PruneBasics = PValInterface
+  syn Prune a =
+  | Prune {vars : Map Symbol Int, values : [a]}
   -- Introduce a pruned variable. Note that this is a low-level
   -- primitive; it introduces the "superposition" by taking the
   -- support of the corresponding distribution, but assumes the user
   -- will later use `p_pruneWeight` to connect the superposition to
   -- the PMF of the distribution.
-  sem p_prune : all st. all a. PValState st
-    -> PVal [a]
-    -> (PValState st, PVal (Prune a))
   -- Introduce a weight based on pruned variables.
-  sem p_pruneWeight : all st. PValState st
+  sem pp_weight : all st. PValState st
     -> PVal (Prune Float)
     -> PValState st
-
-  sem pp_pure : all a. a -> Prune a
-  sem pp_map : all a. all b. (a -> b) -> Prune a -> Prune b
-  sem pp_apply : all a. all b. Prune (a -> b) -> Prune a -> Prune b
-end
-
-
-
-lang PruneBasics = PValInterface
-  syn Prune a =
-  | Prune {vars : Map Symbol Int, values : [a]}
+  --sem pp_prior: all a. all b. [a] -> Prune b -> 
+  sem pp_prior probs = | Prune x -> Prune { vars=x.vars, values = probs }
 
   sem pp_debugPrune : all a. [a] -> Prune a
   sem pp_debugPrune = | values ->
     Prune {vars = mapSingleton _cmpSym (gensym ()) (length values), values = values}
+    -- e.g. vars={x:4},values=[0,1,2,3]
 
+  sem pp_pure : all a. a -> Prune a
   sem pp_pure = | a -> Prune {vars = mapEmpty _cmpSym, values = [a]}
+  -- lifting, e.g. vars={}, values=[1]
+  sem pp_map : all a. all b. (a -> b) -> Prune a -> Prune b
   sem pp_map f = | Prune x -> Prune {vars = x.vars, values = map f x.values}
+  -- map a pruned variable (addi 2) (Prune x) -> values = [2,3,4,5] given values of x = [0,1,2,3]
+  sem pp_apply : all a. all b. Prune (a -> b) -> Prune a -> Prune b
   sem pp_apply f = | Prune x ->
+  -- apply a pruned variable to a pruned variable
+    -- For example f = Prune {vars=X:4, values=addi 0, addi 1, addi 2, addi 3}
     match f with Prune f in
-    let vars = mapUnion f.vars x.vars in
-    let numValues = mapFoldWithKey (lam acc. lam. lam count. muli acc count) 1 vars in
+    let vars = mapUnion f.vars x.vars in -- vars = {X:4, Y:4}
     -- NOTE(vipa, 2025-11-06): Conceptually, for each `Prune` value we
     -- want a mapping between index in `values` and position in the
     -- tensor, i.e., one index per entry in `vars`. Implementation
@@ -194,34 +213,212 @@ lang PruneBasics = PValInterface
     -- to implement, and a good first step, but probably not the most
     -- efficient). It might also be possible to "step" through the two
     -- input sequences and the output in sync, which might be more
-    -- efficient, but harder to get right.
-    let values = never in -- TODO(vipa, 2025-11-06): Do the thing
+    -- efficient, but harder to get right., 2025-11-10): assumes that mapBindings gives sorted keys.
+    -- NOTE(gizem
+    let orderedBindings = mapBindings vars in -- orderedBindings = [(X,4), (Y,4)]
+    let dims = map (lam k. k.1) orderedBindings in -- dims = [4, 4]
+    -- compute the strides
+    -- dims [d0,d1,...,dn-1] -> strides [d1*d2*...*dn-1, ..., 1]
+    -- e.g. [2,3,4] -> [12,4,1] meaning to reach the second row (dim) should skip 12 elements etc
+    
+    -- map key -> position in orderedBindings Given variable name k, what is its coordinate index in the combined tensor?
+    -- keyPos = {X -> 0, Y-> 1}
+    let keyPos =  foldli (lam acc. lam i. lam k. mapInsert k.0 i acc) (mapEmpty _cmpSym) orderedBindings in
+    -- each input (f and x) stores its values flattened into a 1D list, and that list’s indices are in the input’s own variable order.
+    -- We need to interpret a coordinate in the combined grid (X,Y)
+    -- Translate it to the coordinates that make sense for f and x
+    let getSubLayout = lam vm.
+        -- The variable order in the local variable map
+        let ks = mapKeys vm in
+        -- where this variable is in the combined tensor order
+        let ps = map (lam k. mapLookupOrElse (lam. error "Unexpected error:key not found") k keyPos) ks in
+        -- the dimensions for these variables
+        let ds = map (lam k. mapLookupOrElse (lam. error "Unexpected error:key not found") k vars) ks in
+        -- strides
+        let ss = computeStrides ds in
+        (ps, ds, ss)
+    in
+    -- For xmap (depends only on X) fPos = [0], fDims = [4], fStrides = [1]
+    match getSubLayout f.vars with (fPos, fDims, fStrides) in
+    -- For y xPos = [1], xDims = [4], xStrides = [1]
+    match getSubLayout x.vars with (xPos, xDims, xStrides) in
+    
+    -- For each cell, chose the corresponding function from f and the corresponding input value from x and apply them. 
+    let numValues = foldl (lam acc. lam d. muli acc d) 1 dims in -- sum of dims, e.g. 4*4=16
+    let values = 
+      create numValues (lam i.
+        -- converts a linear index i into multi-dim coord, i=0 -> [0, 0], i=1 -> [0, 1], i=4 -> [1, 0]
+        -- which combination of variable values we are filling
+        let coords = linearToCoords i dims in 
+        -- project coords to f and x in their own var orders
+        let fCoords = map (lam p. get coords p) fPos in -- fPos = [0] -> fCoords = [(0,0)]
+        let xCoords = map (lam p. get coords p) xPos in -- xPos = [1] -> xCoords = [()]
+        let fi = coordsToLinear fCoords fStrides in
+        let xi = coordsToLinear xCoords xStrides in
+        let g = get f.values fi in
+        let a = get x.values xi in g a) in
     Prune {vars = vars, values = values}
 
+  /-
+    factorPruneMap is a map from Prune Int to a map of Prune Floats and 
+    x -> { {x,y}: f1, {x,z}: f2 }, 2  
+    y -> { {x,y}: f1, {y,z}: f3 }, 2
+    z -> { {x,z}: f2, {y,z}: f3 }, 2
+  -/
   syn Graph =
-  sem emptyGraph : () -> Graph
-  sem pickVar : Graph -> (Option Symbol, [Prune Float], Graph)
-  sem addWeights : Prune Float -> Graph -> Graph
+  | Graph {factorPruneMap:Map Symbol (Map (Set Symbol) (Prune Float), Int),scalar:Float}
+
+  sem emptyGraph : () -> Graph 
+  sem emptyGraph = | _ ->
+    Graph {factorPruneMap=mapEmpty _cmpSym,scalar=0.0}
+
+  -- variable + factors connected + graph without that varibale+factors
+  sem pickVar : Graph -> Either Float (Symbol, [Prune Float], Graph)
+  sem pickVar = | Graph g ->
+    if eqi (mapSize (g.factorPruneMap)) 0 then Left g.scalar -- if no more variables left
+    else
+      (let orderedBindings= mapBindings g.factorPruneMap in
+      -- choose the item with minimal factors
+      let minItem:(Symbol, (Map (Set Symbol) (Prune Float),Int)) = head orderedBindings in
+      let minItem = foldl (lam acc. lam e:(Symbol, (Map (Set Symbol) (Prune Float),Int)). 
+        match acc with (_, (minMap, minCount)) in
+        (if gti minCount (e.1).1 then (e.0, e.1) else acc)) minItem (tail orderedBindings) in
+      match minItem with (minVar, (minMap, minCount)) in
+      -- create a graph without the chosen variable
+      let factorPruneMap = mapRemove minItem.0 g.factorPruneMap in
+      let factors:[Prune Float] = (mapValues minMap) in
+      let keys = mapKeys factorPruneMap in
+
+      let factorPruneMap = foldl (lam acc. lam vSym.
+         match mapLookupOrElse (lam. (mapEmpty setCmp, 0)) vSym acc with (fm,_) in
+         -- drop any factor whose scope set contains minVar
+         let fm =  mapFilterWithKey (lam scope. lam. not (setMem minVar scope)) fm in
+         mapInsert vSym (fm, mapSize fm) acc) factorPruneMap keys in
+      Right (minItem.0, factors, Graph {g with factorPruneMap=factorPruneMap}))
+
+  -- handle when no var but only factor, add it to the graph scalar.
+  sem addFactors : Prune Float -> Graph -> Graph
+  sem addFactors p = | Graph g -> 
+  match p with Prune f in
+  if eqi (mapSize f.vars) 0 then
+    -- scalar-only factor; combine via log-sum-exp
+    let v = get f.values 0 in
+    let s = if eqf g.scalar 0.0 then v
+      else let m = if ltf g.scalar v then v else g.scalar in
+        addf m (log (addf (exp (subf g.scalar m)) (exp (subf v m)))) in
+    Graph { g with scalar = s }
+  else 
+    let keys = mapKeys f.vars in
+    let scope = setOfSeq _cmpSym keys in
+    let updateVar = lam acc:Map Symbol (Map (Set Symbol) (Prune Float), Int). lam vSym.
+      match mapLookupOrElse (lam. (mapEmpty setCmp, 0)) vSym acc with (oldMap, oldCount) in
+      let newMap = match mapLookup scope oldMap with Some oldFactor then
+      -- merge oldFactor and p by pointwise log-add (i.e. multiply in prob space)
+        let merged = pp_apply (pp_map addf oldFactor) p in
+        mapInsert scope merged oldMap
+       else mapInsert scope p oldMap in
+    let newCount = mapSize newMap in
+    mapInsert vSym (newMap, newCount) acc in
+    let fpm = foldl updateVar g.factorPruneMap keys in
+    Graph { g with factorPruneMap = fpm }
+
+  sem sym2str =
+  | s -> int2string (sym2hash s)
+    -- scalar-only factor; combine via log-sum-exp
+  -- takes a list of pruned factors, each representing a function over discrete latent variables,
+  -- eliminates all variables successively.
+  sem printSet : Set Symbol -> String
+  sem printSet = | s ->
+    let elems = setToSeq s in
+    join ["{" , (strJoin "," (map sym2str elems)) , "}"]
+
+  sem printPruneSummary : all a. Prune a -> (a -> String) -> String
+  sem printPruneSummary p = | toString ->
+    match p with Prune f in
+    let varStr = strJoin "," (map (lam kv. join ["(" , sym2str kv.0 , ":" , int2string kv.1 , ")"]) (mapBindings f.vars)) in
+    let n = length f.values in
+    let valsStr = strJoin "," (map toString f.values) in
+    join ["Prune(vars=[" , varStr , "], values=[" , valsStr , "], size=" ,int2string n , ")"]
+
+  sem printScopeFactorMap : Map (Set Symbol) (Prune Float) -> String
+  sem printScopeFactorMap = | m ->
+    let bs = mapBindings m in
+    let entries = map (lam kv. join ["  scope " , printSet kv.0 , "->" , printPruneSummary kv.1 float2string]) bs in
+    strJoin "\n" entries
+
+  sem printFactorPruneMap = | fpm ->
+    let bs = mapBindings fpm in
+    let entries = map (lam kv. join ["Var " , sym2str kv.0 , " (degree=" , int2string (kv.1).1 , ") {\n" , printScopeFactorMap (kv.1).0 , "\n}"]) bs in
+    strJoin "\n\n" entries
+
+  sem printGraph = | Graph gr ->
+    let scalarStr = join ["scalar (log-weight): " , float2string gr.scalar] in
+    let fpmStr = if eqi (mapSize gr.factorPruneMap) 0 then "factorPruneMap: empty"
+      else join ["factorPruneMap:\n" , printFactorPruneMap gr.factorPruneMap] in 
+    printLn (join ["GRAPH" , "\n" , scalarStr , "\n" , fpmStr])
+
+  -- log-sum-exp over axis 'var' of a Prune Float
+  sem lseSumOut var = | Prune t -> 
+    let orderedBindings = mapBindings t.vars in          -- [(Symbol, Int)] sorted
+    let dims    = map (lam kv. kv.1) orderedBindings in  -- [d0..dn-1]
+    let keyPos =  foldli (lam acc. lam i. lam k. mapInsert k.0 i acc) (mapEmpty _cmpSym) orderedBindings in
+    let axis = mapLookupOrElse (lam. error "lseSumOut: var not in factor") var keyPos in
+
+    let strides = computeStrides dims in
+    let svar = get strides axis in
+    let dvar = get dims axis in
+    let idxs = create (length dims) (lam i. i)  in
+    let others = filter (lam j. not (eqi j axis)) idxs in
+    let dimsO = map (lam j. get dims j) others in -- dimensions of non-marginalized vars
+    let stridesO = map (lam j. get strides j) others in
+    let numOut = foldl (lam acc. lam d. muli acc d) 1 dimsO in -- length of output vector
+
+    create numOut (lam tIdx. -- fix the others and iterate over the marginalized value
+      let coordsO = linearToCoords tIdx dimsO in
+      -- start index of var to get the value
+      let base = foldl2 (lam acc. lam c. lam s. addi acc (muli c s)) 0 coordsO stridesO in
+      -- get first value as initial max
+      let v0 = get t.values (addi base 0) in
+      -- find max along var axis
+      recursive let maxLoop = lam k. lam m.
+        if eqi k dvar then m
+        else let v = get t.values (addi base (muli k svar)) in
+          maxLoop (addi k 1) (if ltf m v then v else m) in
+      let m = maxLoop 0 v0 in
+      if eqf m (negf inf) then (negf inf)
+      else
+        -- sum exp(v-m)
+        recursive let sumLoop = lam k. lam acc.
+          if eqi k dvar then acc
+          else let v = get t.values (addi base (muli k svar)) in
+            sumLoop (addi k 1) (addf acc (exp (subf v m))) in
+        let s = sumLoop 0 0.0 in
+        addf m (log s)  -- m + log \sum exp(v-m)
+    )
 
   sem marginalizeAllPruned : [Prune Float] -> Float
-  sem marginalizeAllPruned = | weights ->
-    let graph = foldl (lam acc. lam p. addWeights p acc) (emptyGraph ()) weights in
+  sem marginalizeAllPruned = | factors ->
+    let graph = foldl (lam acc. lam p. addFactors p acc) (emptyGraph ()) factors in
+    printGraph graph;
     recursive let work = lam graph.
       switch pickVar graph
-      case (Some var, [p] ++ prunes, graph) then
+      case Right (var, [p] ++ prunes, graph) then -- [p] ++ prunes: all factors involving var
+        printGraph graph;
+        printLn (int2string (sym2hash var));
+        -- merge all the factors involving var by adding their log-values
         let merged = foldl (lam acc. pp_apply (pp_map addf acc)) p prunes in
         match merged with Prune x in
-        let values = never in  -- TODO(vipa, 2025-11-06): marginalize out var
+        let orderedBindings = mapBindings x.vars in
+        let dims = map (lam k. k.1) orderedBindings in
+        let strides = computeStrides dims in
+        -- Summing out var:calculate lse for one high-dimensional vector merged
+        let values = lseSumOut var merged in 
         let marginalized = Prune {vars = mapRemove var x.vars, values = values} in
-        work (addWeights marginalized graph)
-      case (None _, [Prune {values = [w]}], _) then w
-      case (None _, [], _) then 0.0
+        work (addFactors marginalized graph)
+      case Left w then w
       end in
     work graph
 end
-
-
-
 
 
 -- === Mutable PVal model instances (should be used affinely) ===
@@ -1100,6 +1297,12 @@ let p_beta : Float -> Float -> PDist Float
     , logObserve = lam x. betaLogPdf a b x
     }
 
+let p_categorical : [Float] -> PDist Int
+  = lam p.
+    { sample = lam. categoricalSample p
+    , logObserve = lam v. categoricalLogPmf p v
+    }
+
 let _chooseUniform : all a. [a] -> a
   = lam l. get l (uniformDiscreteSample 0 (subi (length l) 1))
 
@@ -1166,8 +1369,125 @@ lang SimpleResample = PValInterface
 end
 
 let showHistogram : Bool = false
+/-  0 1 2 3
+  0 0 1 2 3
+  1 1 2 3 4
+  2 2 3 4 5
+  3 3 4 5 6
+-/
 
+let printPruneDebug = lam toString. lam x. 
+  use PruneBasics in
+  match x with Prune l in
+  printLn (strJoin " " (map toString (unsafeCoerce l.values)))
 
+-- === Prune ==
+let runWithoutPrune = lam.
+  use PruneBasics in
+  let x = assume (Categorical [0.25,0.25,0.25,0.25]) in
+  let y = assume (Categorical [0.25,0.25,0.25,0.25]) in
+  let f = lam x. lam y. addi y x in
+  let res = f x y in
+  observe res (Categorical (make 7 (divf 1. 7.)))
+
+let runPrune = lam.
+  use PruneBasics in
+  let x = pp_debugPrune [0,1,2,3] in -- x = Prune { vars = {X:4}, values = [0,1,2,3] } prune Categorical [0.25,...]
+  let prior_x = pp_map (p_logObserve (p_categorical [0.25,0.25,0.25,0.25])) x in--Prune { vars = {X:4}, values= map log [0.25,...]} 
+  let y = pp_debugPrune [0,1,2,3] in -- y = Prune { vars = {Y:4}, values = [0,1,2,3] }
+  let prior_y = pp_map (p_logObserve (p_categorical [0.3,0.2,0.1,0.4])) y in--Prune { vars = {Y:4}, values= map log [0.3,0.2,0.1,0.4]} 
+  let f = lam x. lam y. addi y x in
+  let xmap = pp_map f x in -- Prune { vars = {X:4}, values = [ (addi 0), (addi 1), (addi 2), (addi 3) ] }
+  let yapply = pp_apply xmap y in -- Prune { vars = {X:4, Y:4}, values = [0,1,2,3,  1,2,3,4,  2,3,4,5,  3,4,5,6] }
+  -- pp_apply (Prune { vars = {}, values = [ p_logObserve dist ] }) yapply
+  --  Prune {vars   = { X:4, Y:4 },values = [ log(1/7) ]x16 }
+  let obs_yapply = pp_apply (pp_map p_logObserve (pp_pure (p_categorical (make 7 (divf 1. 7.))))) yapply in
+  /-printPruneDebug float2string prior_x;
+    printPruneDebug int2string x;
+    printPruneDebug int2string y;
+    printPruneDebug int2string xmap;
+    printPruneDebug int2string yapply;
+    printPruneDebug float2string obs_yapply;-/
+  (marginalizeAllPruned [prior_x,prior_y, obs_yapply])
+
+let runPruneSingleCat = lam.
+  use PruneBasics in
+  let x = pp_debugPrune [0,1,2] in
+  let prior_x = pp_map (p_logObserve (p_categorical [0.2, 0.5, 0.3])) x in
+  let xmap = pp_map (p_logObserve (p_categorical [0.1, 0.7, 0.2])) x in
+  marginalizeAllPruned [prior_x, xmap] 
+let runWithoutPruneSingleCat = lam.
+  let x = assume (Categorical [0.2, 0.5, 0.3]) in   -- vars = {X:3}
+  observe x (Categorical [0.1, 0.7, 0.2])
+
+let runWithoutPruneBernAnd = lam.
+  let a = assume (Bernoulli 0.5) in
+  let b = assume (Bernoulli 0.5) in
+  observe (and a b) (Bernoulli 1.0); 
+  and a b
+let runPruneBernAnd = lam.
+  use PruneBasics in
+  let a = pp_debugPrune [false, true] in   -- A
+  let b = pp_debugPrune [false, true] in   -- B
+
+  let prior_a = pp_map (p_logObserve (p_bernoulli 0.5)) a in
+  let prior_b = pp_map (p_logObserve (p_bernoulli 0.5)) b in
+
+  let f = lam a. lam b. and a b in
+  let amap = pp_map f a in        
+  let c = pp_apply amap b in 
+  let obs = pp_apply (pp_map p_logObserve (pp_pure (p_bernoulli 1.0))) c in
+  marginalizeAllPruned [prior_a, prior_b, obs] 
+  
+let cpplResOfDist=
+  lam f. lam burn. lam dist.
+    match distEmpiricalSamples dist with (vs,ws) in
+    let nvs = length vs in
+    let samples = subsequence vs (mini nvs burn) nvs in
+    let nws = length ws in
+    let lweights =  subsequence ws (mini nws burn) nws in
+    let nc = distEmpiricalNormConst dist in
+    { samples = map f samples, lweights = lweights, extra = Some nc }
+let cpplResOfDistBool=
+  lam f. lam burn. lam dist.
+    match distEmpiricalSamples dist with (vs,ws) in
+    let nvs = length vs in
+    let samples = subsequence vs (mini nvs burn) nvs in
+    let nws = length ws in
+    let lweights =  subsequence ws (mini nws burn) nws in
+    let nc = distEmpiricalNormConst dist in
+    { samples = map f samples, lweights = lweights, extra = Some nc }
+  let resNormConst = lam cpplRes.
+  match cpplRes.extra with Some nc then nc else
+  error "Normalizing constant does not exist in cpplRes"
+let r = resNormConst 
+let c = cpplResOfDist (lam. "") 
+let cBool = cpplResOfDistBool (lam. "") 
+
+let result = 
+  printLn "=== runPrune ===";
+
+  printLn (join["With prune:",(float2string (runPrune ()))]);
+  let iterations = 100000 in
+  let run = lam.
+    infer (BPF {particles = iterations}) (runWithoutPrune)
+  in
+  printLn (join["Without prune SMC:",(float2string (r (c 0 (run ()))))]);
+
+  printLn (join["With prune:",(float2string (runPruneSingleCat ()))]);
+  let iterations = 100000 in
+  let run = lam.
+    infer (BPF {particles = iterations}) (runWithoutPruneSingleCat)
+  in
+  printLn (join["Without prune SMC:",(float2string (r (c 0 (run ()))))]);
+
+  printLn (join["With prune:",(float2string (runPruneBernAnd ()))]);
+  let iterations = 100000 in
+  let run = lam.
+    infer (BPF {particles = iterations}) (runWithoutPruneBernAnd)
+  in
+  printLn (join["Without prune SMC:",(float2string (r (cBool 0 (run ()))))]);
+  ()
 -- === Bern and ==
 
 let baseline = lam.
@@ -1209,6 +1529,7 @@ let result =
     match pair with (time, res) in
     printLn (join [float2string time, "ms (", label, ")"]);
     if showHistogram then printLn (hist2string toString (mkHisto (distEmpiricalSamples res).0)) else () in
+  
   let run =
     use RunBernAndMut in
     let instance = instantiate #frozen"run" ([], ()) in
