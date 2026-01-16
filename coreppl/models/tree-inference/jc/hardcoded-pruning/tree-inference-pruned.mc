@@ -1,17 +1,14 @@
 include "matrix.mc"
-include "ext/matrix-ext.mc"
+include "ext/mat-ext.mc"
 include "ext/dist-ext.mc"
 include "../../helper/helper.mc"
-
-con Node : {age: Float, msg: [[Float]], left: Tree, right: Tree, lastWeight:Float} -> Tree
-let getAge = lam n. match n with Node r then r.age else match n with Leaf r then r.age else never
-let getMsg = lam n. match n with Leaf r then r.msg else match n with Node r then r.msg else never
+include "../../helper/buildTree.mc"
 
 let slice = lam seq. lam beg. lam mend.
     subsequence seq beg (subi mend beg)
 
-let matrixGet = lam row. lam col. lam tensor.
-  tensorGetExn tensor [row, col]
+let matrixGet = lam row. lam col. lam mtx.
+  matGetExn mtx row col
 
 let pickpair = lam n.
   let i = assume (UniformDiscrete 0 (subi n 1)) in
@@ -22,30 +19,36 @@ let iid = lam f. lam p. lam n.
   let params = make n p in
   map f params
 
-let getLeafMessage = lam seq:Int.
-  if eqi seq 0 then [1.0, 0.0, 0.0, 0.0]
-  else if eqi seq 1 then [0.0, 1.0, 0.0, 0.0]
-  else if eqi seq 2 then [0.0, 0.0, 1.0, 0.0]
-  else if eqi seq 3 then [0.0, 0.0, 0.0, 1.0]
-  else if eqi seq 4 then [1.0, 1.0, 1.0, 1.0]
-  else error "Invalid state at leaf"
+let applyPRows = lam p:Mat Float. lam m:Mat Float.
+  matMulExn m (matTranspose p)
 
-let getLogLikes = lam msg. lam pi.
-  let like = foldl2 (lam acc. lam x. lam p. addf acc (mulf x p)) 0. msg pi in
-  log like
-
-let ctmc = lam i. lam qt:Tensor[Float]. 
-  [matrixGet i 0 qt,matrixGet i 1 qt,matrixGet i 2 qt,matrixGet i 3 qt] 
-
-recursive
-let buildForest =  lam data. lam forest:[Tree]. lam index. lam data_len. lam seq_len.
-  foldl (lam forest. lam data.
-    let newMessage = sapply data getLeafMessage in
-    let newLeaf = Leaf {age=0.0,msg = newMessage} in
-    let newForest = join ([forest,[newLeaf]]) in
-    newForest
-  ) [] data
+-- sum_i log(col[i,0])
+recursive let sumLog = lam arr:ExtArr Float. lam i:Int. lam m:Int. lam acc:Float.
+  if eqi i m then acc
+  else sumLog arr (addi i 1) m (addf acc (log (externalExtArrGet arr i)))
 end
+
+let totalw = lam nodeMsg:Mat Float. lam n:Int.
+  let s = nodeMsg.n in
+  let w = if gti n 2 then 1.0 else divf 1.0 (int2float s) in
+  let vec = matMake extArrKindFloat64 s 1 w in
+  let col = matMulExn nodeMsg vec in
+  -- col is m×1 row-major, so element (i,0) sits at index i in col.arr
+  sumLog col.arr 0 col.m 0.0
+
+/-let jcProbs = lam i. lam j. lam t.
+  if eqi i j then addf 0.25 (mulf 0.75 (exp (negf (mulf (divf 4. 3.) t))))
+  else subf 0.25 (mulf 0.25 (exp (negf (mulf (divf 4. 3.) t))))
+let jcMat = lam t:Float.
+  let p = matMakeUninit extArrKindFloat64 4 4 in
+  recursive let fill = lam i:Int. lam j:Int.
+    if eqi i 4 then ()
+    else 
+      if eqi j 4 then fill (addi i 1) 0
+      else 
+        matSetExn p i j (jcProbs i j t);
+        fill i (addi j 1)
+  in fill 0 0; p-/
 
 recursive
 let cluster = lam q. lam trees. lam maxAge. lam seqLen. lam n.
@@ -57,22 +60,12 @@ let cluster = lam q. lam trees. lam maxAge. lam seqLen. lam n.
 
   let t = assume (Exponential 10.0) in
   let age = addf t maxAge in
-  let qts = map (lam c. matrixExponential (matrixMulFloat (subf age (getAge c)) q)) children in
-  let ps = map (lam qt. map (lam i. ctmc i qt) [0,1,2,3]) qts in
-  let msgs = reverse (zipAll (map getMsg children)) in
+  let ps = map (lam c. matTranspose (matExpExn (matScale (subf age (getAge c)) q))) children in
   iter (lam c. match c with Node n then weight (negf n.lastWeight) else ()) children;
-
-  let res = mapIndex (lam i.
-    let msg = get msgs i in
-    let childMsgs = zipWithIndex (lam j. lam child. lam p1.
-      let msg = get msg j in
-      map (lam p. foldl2 (lam acc. lam pi. lam lci. addf acc (mulf pi lci)) 0. p msg) p1
-    ) children ps in
-    let node_msg = foldl (lam acc. lam m. zipWith mulf acc m) (head childMsgs) (tail childMsgs) in
-    let lastW = (if gti n 2 then log (foldl addf 0. node_msg) else getLogLikes node_msg [0.25,0.25,0.25,0.25]) in
-    (node_msg, lastW)
-  ) seqLen in
-  match mapAccumL (lam acc. lam r. (addf acc r.1,r.0)) 0. res with (lastW,node_msg) in
+  let leftPost  = matMulExn (getMsg leftChild)(get ps 0) in -- if q is not symmetric, (matTranspose (get ps 0))
+  let rightPost = matMulExn (getMsg rightChild) (get ps 1) in   
+  let node_msg = matElemMulExn leftPost rightPost in  
+  let lastW = totalw node_msg n in
   weight lastW;
   resample;
   let parent = Node {age=age, msg = node_msg,left = leftChild, right = rightChild, lastWeight=lastW} in
@@ -82,11 +75,5 @@ let cluster = lam q. lam trees. lam maxAge. lam seqLen. lam n.
   cluster q new_trees age seqLen (subi n 1)
 end
 
-let model = lam.
-  let q = [negf 1., divf 1. 3., divf 1. 3., divf 1. 3.,
-   divf 1. 3., negf 1., divf 1. 3., divf 1. 3.,
-   divf 1. 3., divf 1. 3.,negf 1., divf 1. 3.,
-   divf 1. 3., divf 1. 3., divf 1. 3., negf 1.] in
-  let q = matrixCreate [4,4] q in
-  let trees:[Tree] = buildForest data [] 0 (length data) seqLength in
+let model = lam trees. lam seqLength. lam q.
   cluster q trees 0.0 seqLength (length trees)
