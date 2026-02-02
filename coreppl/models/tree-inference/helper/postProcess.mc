@@ -36,10 +36,11 @@ let splitPrint =  lam treeSamples. lam weights. foldl2 (lam acc. lam tree. lam w
 	join [acc, splits," ", float2string w, "\n"]
 ) "" treeSamples weights
 
-let postProcessTree = lam dist. lam tlFilename. lam splitFilename.
+let postProcessTree = lam dist. lam tlFilename. lam splitFilename. lam consNC.
 	match distEmpiricalSamples dist with (treeSamples, weights) in
 	(match fileWriteOpen tlFilename with Some wc then
 	  let write = fileWriteString wc in
+	  (if consNC then write (join [(float2string (distEmpiricalNormConst dist)),"\n"]) else ());
 	  write (branchLengthRes treeSamples weights);
 	  fileWriteFlush wc; -- Not needed here, just testing the API
 	  fileWriteClose wc;
@@ -47,6 +48,7 @@ let postProcessTree = lam dist. lam tlFilename. lam splitFilename.
 	else error "Error writing to file.");
 	match fileWriteOpen splitFilename with Some wc then
 	  let write = fileWriteString wc in
+	  (if consNC then write (join [(float2string (distEmpiricalNormConst dist)),"\n"]) else ());
 	  write (splitPrint treeSamples weights);
 	  fileWriteFlush wc; -- Not needed here, just testing the API
 	  fileWriteClose wc;
