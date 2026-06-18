@@ -87,9 +87,22 @@ let triGet = lam dTri:[[Float]]. lam i:Int. lam j:Int.
 let idx2 = lam n:Int. lam i:Int. lam j:Int.
   addi (muli i n) j
 
+-- CFA-safe Float array creator. The stdlib polymorphic `arrCreate` uses
+-- `unsafeCoerce` in its empty-array branch, which the alignment CFA pass run by
+-- `--cps partial` cannot analyze ("Constant not supported in CFA: unsafeCoerce").
+-- This builds the array via `arrMakeUninitFloat`, which is CFA-safe (the leaf
+-- message construction already relies on it under `--cps partial`).
+let arrCreateF : Int -> (Int -> Float) -> Arr Float = lam n. lam f.
+  let a = arrMakeUninitFloat n in
+  recursive let work = lam i.
+    if eqi i n then () else (arrSetExn a i (f i); work (addi i 1))
+  in
+  work 0;
+  a
+
 let triToFlatSymArr = lam dTri:[[Float]].
   let n = addi (length dTri) 1 in
-	arrCreate (muli n n) (lam k.
+	arrCreateF (muli n n) (lam k.
 	  let i = divi k n in
 	  let j = modi k n in
 	  if eqi i j then 0.0

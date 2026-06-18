@@ -145,7 +145,7 @@ let mergeIntoLast = lam n:Int. lam d:Arr Float. lam i:Int. lam j:Int.
   let m = subi n 1 in
   let z = subi m 1 in
   -- gonna be an m by m matrix (flattened)
-  arrCreate (muli m m) (lam k.
+  arrCreateF (muli m m) (lam k.
     let r = divi k m in -- row 
     let c = modi k m in -- column
     if eqi r c then 0.0 -- diagonal is 0
@@ -177,7 +177,7 @@ let mergeIntoLastFromMsgs =
   lam n:Int. lam d:Arr Float. lam trees. lam seqLen:Int. lam i:Int. lam j:Int. lam parent.
     let m = subi n 1 in
     let z = subi m 1 in
-    arrCreate (muli m m) (lam k.
+    arrCreateF (muli m m) (lam k.
       let r = divi k m in
       let c = modi k m in
       if eqi r c then 0.0 else
@@ -294,7 +294,7 @@ utest
     if and (eqi i 3) (eqi j 2) then 7.0 else
     g j i
   in
-  let d = arrCreate (muli n n) (lam k.
+  let d = arrCreateF (muli n n) (lam k.
     let i = divi k n in
     let j = modi k n in
     g i j) in
@@ -320,7 +320,7 @@ utest
     if and (eqi i 3) (eqi j 2) then 7.0 else
     g j i
   in
-  let d = arrCreate (muli n n) (lam k.
+  let d = arrCreateF (muli n n) (lam k.
     let i = divi k n in
     let j = modi k n in
     g i j) in
@@ -344,7 +344,7 @@ utest
     if and (eqi i 3) (eqi j 2) then 7.0 else
     g j i
   in
-  let d = arrCreate (muli n n) (lam k.
+  let d = arrCreateF (muli n n) (lam k.
     let i = divi k n in
     let j = modi k n in
     g i j) in
@@ -355,7 +355,7 @@ with (5.0, 6.5) in
 -- Helper: make a flattened n×n distance matrix from a function g(i,j)
 -- g is assumed symmetric and g(i,i)=0 in the caller logic if desired.
 let mkMat = lam n:Int. lam g.
-  arrCreate (muli n n) (lam k.
+  arrCreateF (muli n n) (lam k.
     let i = divi k n in
     let j = modi k n in
     g i j
@@ -503,7 +503,7 @@ in
 -- ----------------------------------------
 
 let mkMat = lam n:Int. lam g.
-  arrCreate (muli n n) (lam k.
+  arrCreateF (muli n n) (lam k.
     let i = divi k n in
     let j = modi k n in
     g i j
@@ -520,7 +520,7 @@ let mergeIntoLastRef = lam n:Int. lam d:Arr Float. lam i:Int. lam j:Int.
   let keepAt = lam r:Int. get keep r in
   -- merged node is new index (m-1)
   let z = subi m 1 in
-  arrCreate (muli m m) (lam k.
+  arrCreateF (muli m m) (lam k.
     let r = divi k m in
     let c = modi k m in
     if eqi r c then 0.0 else
