@@ -36,19 +36,6 @@ let totalw = lam nodeMsg:Mat Float. lam n:Int.
   -- col is m×1 row-major, so element (i,0) sits at index i in col.arr
   sumLog col.arr 0 col.m 0.0
 
-/-let jcProbs = lam i. lam j. lam t.
-  if eqi i j then addf 0.25 (mulf 0.75 (exp (negf (mulf (divf 4. 3.) t))))
-  else subf 0.25 (mulf 0.25 (exp (negf (mulf (divf 4. 3.) t))))
-let jcMat = lam t:Float.
-  let p = matMakeUninit extArrKindFloat64 4 4 in
-  recursive let fill = lam i:Int. lam j:Int.
-    if eqi i 4 then ()
-    else 
-      if eqi j 4 then fill (addi i 1) 0
-      else 
-        matSetExn p i j (jcProbs i j t);
-        fill i (addi j 1)
-  in fill 0 0; p-/
 
 recursive
 let cluster = lam q. lam trees. lam maxAge. lam seqLen. lam n.
@@ -57,7 +44,6 @@ let cluster = lam q. lam trees. lam maxAge. lam seqLen. lam n.
   let leftChild = get trees pairs.0 in
   let rightChild = get trees pairs.1 in
   let children = [leftChild, rightChild] in
-
   let t = assume (Exponential 10.0) in
   let age = addf t maxAge in
   let ps = map (lam c. matTranspose (matExpExn (matScale (subf age (getAge c)) q))) children in
