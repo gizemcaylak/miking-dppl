@@ -50,7 +50,7 @@ lang AutoDriftKernel = Assume + DistAll
   sem chooseKernelDist : Expr -> Expr -> Dist -> Option Expr
   sem chooseKernelDist driftScale x =
   | _ -> None ()
-/-
+
   | DBeta _ ->
     let dist = DBeta {a = mulf_ driftScale x, b = mulf_ driftScale (subf_ (float_ 1.) x)} in
     Some (dist_ dist)
@@ -88,5 +88,5 @@ lang AutoDriftKernel = Assume + DistAll
     Some (dist_ (DUniform {a = subf_ x driftScale, b = addf_ x driftScale}))
 
   | DReciprocal _ ->
-    Some (dist_ (DReciprocal {a = subf_ x driftScale, b = addf_ x driftScale}))-/
+    Some (dist_ (DReciprocal {a = subf_ x driftScale, b = addf_ x driftScale}))
 end
