@@ -145,7 +145,7 @@ let mergeIntoLast = lam n:Int. lam d:Arr Float. lam i:Int. lam j:Int.
   let m = subi n 1 in
   let z = subi m 1 in
   -- gonna be an m by m matrix (flattened)
-  arrCreateFloat (muli m m) (lam k.
+  arrCreate (muli m m) (lam k.
     let r = divi k m in -- row 
     let c = modi k m in -- column
     if eqi r c then 0.0 -- diagonal is 0
@@ -177,7 +177,7 @@ let mergeIntoLastFromMsgs =
   lam n:Int. lam d:Arr Float. lam trees. lam seqLen:Int. lam i:Int. lam j:Int. lam parent.
     let m = subi n 1 in
     let z = subi m 1 in
-    arrCreateFloat (muli m m) (lam k.
+    arrCreate (muli m m) (lam k.
       let r = divi k m in
       let c = modi k m in
       if eqi r c then 0.0 else
@@ -231,18 +231,18 @@ let swapPartner = lam partitions. lam weights. lam leafSets:[[Int]]. lam prev:[I
   match unzip (filter f something) with (weightsN, leafSetsN) in
   --printLn (foldl (lam acc. lam l. join [acc,"(",strJoin "," (map int2string l),")"] )  "after:\n" leafSetsN);
   --print "prev:";printLn (strJoin "," (map int2string prev)) ;
-  if null leafSetsN then Pair weights leafSets --if it is the only option
-  else 
+  if null leafSetsN then TreeInferenceCategorical weights leafSets --if it is the only option
+  else
     let sumW = foldl addf 0.0 weightsN in
     let weightsN = map (lam e. divf e sumW) weightsN in
-    Pair weightsN leafSetsN
+    TreeInferenceCategorical weightsN leafSetsN
 
 let propose = lam d. lam partitions. lam f. lam n.
   match pairCalcP partitions n d f with (idxPairs,pairSets,p) in
-  --let pairU = assume (Pair p pairSets) in
-  let pairU = assumeDrift (Pair p pairSets) (swapPartner (map partElems partitions ) p pairSets) in
+  let pairU = assume (TreeInferenceCategorical p pairSets) in
+  --let pairU = assumeDrift (TreeInferenceCategorical p pairSets) (swapPartner (map partElems partitions ) p pairSets) in
   -- correction ---
-  cancel (observe pairU (Pair p pairSets)); -- this part should stay the same since kernel itself corrects?
+  cancel (observe pairU (TreeInferenceCategorical p pairSets)); -- this part should stay the same since kernel itself corrects?
   let logU = log (divf 1. (int2float (length p))) in
   weight logU;
   -----------------
@@ -294,7 +294,7 @@ utest
     if and (eqi i 3) (eqi j 2) then 7.0 else
     g j i
   in
-  let d = arrCreateFloat (muli n n) (lam k.
+  let d = arrCreate (muli n n) (lam k.
     let i = divi k n in
     let j = modi k n in
     g i j) in
@@ -320,7 +320,7 @@ utest
     if and (eqi i 3) (eqi j 2) then 7.0 else
     g j i
   in
-  let d = arrCreateFloat (muli n n) (lam k.
+  let d = arrCreate (muli n n) (lam k.
     let i = divi k n in
     let j = modi k n in
     g i j) in
@@ -344,7 +344,7 @@ utest
     if and (eqi i 3) (eqi j 2) then 7.0 else
     g j i
   in
-  let d = arrCreateFloat (muli n n) (lam k.
+  let d = arrCreate (muli n n) (lam k.
     let i = divi k n in
     let j = modi k n in
     g i j) in
@@ -355,7 +355,7 @@ with (5.0, 6.5) in
 -- Helper: make a flattened n×n distance matrix from a function g(i,j)
 -- g is assumed symmetric and g(i,i)=0 in the caller logic if desired.
 let mkMat = lam n:Int. lam g.
-  arrCreateFloat (muli n n) (lam k.
+  arrCreate (muli n n) (lam k.
     let i = divi k n in
     let j = modi k n in
     g i j
@@ -503,7 +503,7 @@ in
 -- ----------------------------------------
 
 let mkMat = lam n:Int. lam g.
-  arrCreateFloat (muli n n) (lam k.
+  arrCreate (muli n n) (lam k.
     let i = divi k n in
     let j = modi k n in
     g i j
@@ -520,7 +520,7 @@ let mergeIntoLastRef = lam n:Int. lam d:Arr Float. lam i:Int. lam j:Int.
   let keepAt = lam r:Int. get keep r in
   -- merged node is new index (m-1)
   let z = subi m 1 in
-  arrCreateFloat (muli m m) (lam k.
+  arrCreate (muli m m) (lam k.
     let r = divi k m in
     let c = modi k m in
     if eqi r c then 0.0 else

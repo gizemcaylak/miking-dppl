@@ -89,7 +89,7 @@ let idx2 = lam n:Int. lam i:Int. lam j:Int.
 
 let triToFlatSymArr = lam dTri:[[Float]].
   let n = addi (length dTri) 1 in
-	arrCreateFloat (muli n n) (lam k.
+	arrCreate (muli n n) (lam k.
 	  let i = divi k n in
 	  let j = modi k n in
 	  if eqi i j then 0.0
