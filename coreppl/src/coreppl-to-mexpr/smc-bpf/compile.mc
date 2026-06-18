@@ -42,8 +42,8 @@ lang MExprPPLBPF =
   sem compile: BPFConfig -> InferenceInterface -> Expr
   sem compile config =
   | x ->
-    let log = mkPhaseLogState x.options.debugDumpPhases x.options.debugPhases in
-    let t = x.extractNoHigherOrderConsts (lam x. x) in
+    let log = mkPhaseLogState x.options.debugDumpPhases x.options.debugPhases (lam. []) in  -- NOTE(vipa, 2026-03-10): These fragments aren't built to be extended, meaning they won't get the fragments needed to process the invariants, thus we process no invariants here
+    let t = x.normalizeTerm (x.extractNoHigherOrderConsts x.stripOpaque) in
     endPhaseStatsExpr log "extract-no-higher-order-consts-one" t;
 
     -- printLn ""; printLn "--- INITIAL ANF PROGRAM ---";
@@ -65,6 +65,15 @@ lang MExprPPLBPF =
       else error "Invalid resample option"
     in
     endPhaseStatsExpr log "resample-one" t;
+
+    recursive let hasResample = lam acc. lam tm.
+      if acc then acc else
+      match tm with TmResample _ then true else
+      sfold_Expr_Expr hasResample false tm in
+    (if not (hasResample false t) then
+      error "A model compiled with smc-bpf has no resample points, i.e., smc would be equivalent with importance sampling. Please explicitly use importance sampling if that is desired, or try a different 'resample' option."
+     else ());
+    endPhaseStatsExpr log "has-resample" t;
 
     -- Static analysis and CPS transformation
     let t =

@@ -28,6 +28,7 @@ include "coreppl-to-mexpr/mcmc-naive/compile.mc"
 include "coreppl-to-mexpr/mcmc-trace/compile.mc"
 include "coreppl-to-mexpr/mcmc-lightweight/compile.mc"
 include "coreppl-to-mexpr/pmcmc-pimh/compile.mc"
+include "coreppl-to-mexpr/pval-graph/compile.mc"
 
 lang CPPLLang = CorePPLFileTypeLoader
   + MExprAst + UtestLoader + ODELoader + MExprGenerateEq
@@ -36,6 +37,8 @@ lang CPPLLang = CorePPLFileTypeLoader
   + BPFCompilerPicker + APFCompilerPicker + ImportanceCompilerPicker
   + NaiveMCMCCompilerPicker + TraceMCMCCompilerPicker + PIMHCompilerPicker
   + LightweightMCMCCompilerPicker
+  + SimplePValGraphCompiler
+  + UnboundErrorAttr + DefinedAttr + WithoutInfoAttr
 end
 
 mexpr
@@ -51,7 +54,7 @@ let isFromModelFileOrStatic = lam x.
   then eqString x.filename filename
   else false in
 
-let log = mkPhaseLogState options.transformations.debugDumpPhases options.transformations.debugPhases in
+let log = mkPhaseLogState options.transformations.debugDumpPhases options.transformations.debugPhases options.transformations.invariantsToCheck in
 
 let loader = mkLoader symEnvDefault typcheckEnvDefault
   [ ODEHook ()
@@ -62,10 +65,10 @@ let loader = enableDefaultInferMethod options.defaultMethod loader in
 let loader = enableCPPLCompilation options.transformations loader in
 let loader = enableUtestGeneration (if options.frontend.test then isFromModelFileOrStatic else lam. false) loader in
 let loader = enablePprintGeneration loader in
-endPhaseStatsExpr log "mk-cppl-loader" unit_;
+endPhaseStatsProg log "mk-cppl-loader" {decls = getDecls loader, expr = unit_};
 
 let loader = (includeFileTypeExn (FCorePPL {isModel = true}) "." filename loader).1 in
-endPhaseStatsExpr log "include-file" unit_;
+endPhaseStatsProg log "include-file" {decls = getDecls loader, expr = unit_};
 
 let ast = buildFullAst loader in
 endPhaseStatsExpr log "build-full-ast" ast;
@@ -88,6 +91,10 @@ let hooks = mkEmptyHooks ocamlCompile in
 
 let ast = lowerAll ast in
 endPhaseStatsExpr log "lower-all" ast;
+
+(if options.frontend.printMCore then
+  printLn (expr2str ast)
+ else ());
 
 if options.frontend.exitBefore then exit 0 else
 

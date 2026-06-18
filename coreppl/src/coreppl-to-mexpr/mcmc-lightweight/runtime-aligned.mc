@@ -212,10 +212,8 @@ let sampleUnaligned: all a. Int -> use RuntimeDistBase in Dist a -> a = lam i. l
 
 -- Function to propose aligned trace changes between MH iterations.
 let modTrace: all a. all acc. all dAcc.
-  Config a acc dAcc -> Float -> () =
-  lam config. lam globalProb.
-
-  let alignedTraceLength: Int = deref state.alignedTraceLength in
+  Config a acc dAcc -> acc -> acc =
+  lam config. lam acc.
 
   recursive let rec: Int -> [(Any,Float)] -> [Option (Any,Float)]
                        -> [Option (Any,Float)] =
@@ -225,29 +223,36 @@ let modTrace: all a. all acc. all dAcc.
         let acc: [Option (Any, Float)] =
           cons (if eqi i 0 then modref state.driftPrevValue sample; None () else Some sample) acc in
         rec (subi i 1) samples acc
-
       else acc
   in
 
+  let alignedTraceLength: Int = deref state.alignedTraceLength in
+  let resBehav = config.resampleBehavior acc alignedTraceLength in
   -- Enable global modifications with probability gProb
-  let modGlobal: Bool = bernoulliSample globalProb in
-
-  if modGlobal then
+  match resBehav with (acc, (unalignedResamp, invalidIndex)) in
+  if lti invalidIndex 0 then
+    let oldUnalignedTraces =
+      zipWith (lam t. lam b. if b then t else []) (deref state.oldUnalignedTraces) unalignedResamp in
+    let oldAlignedTrace = deref state.oldAlignedTrace in
     modref state.oldAlignedTrace (emptyList ());
-    modref state.oldUnalignedTraces (emptyList ())
+    (if eqi invalidIndex (negi 1) then
+      modref state.oldAlignedTrace oldAlignedTrace else ());
+    modref state.oldUnalignedTraces oldUnalignedTraces;
+    acc
   else
     -- One index must always change
-    let invalidIndex: Int = uniformDiscreteSample 0 (subi alignedTraceLength 1) in
     modref state.oldAlignedTrace
       (rec invalidIndex (deref state.alignedTrace) (emptyList ()));
 
     -- Also set correct old unaligned traces (always reused if possible, no
     -- invalidation)
     modref state.oldUnalignedTraces (mapReverse (lam trace.
-      reverse trace
-    ) (deref state.unalignedTraces));
-
-    ()
+      reverse trace ) (deref state.unalignedTraces));
+    -- correct the trace accordeling to unalignedResamp
+    let oldUnalignedTraces = zipWith (lam t. lam b. if b then t else [])
+      (deref state.oldUnalignedTraces) (mapReverse (lam trace. trace) unalignedResamp) in
+    modref state.oldUnalignedTraces oldUnalignedTraces;
+    acc
 
 -- General inference algorithm for aligned MCMC
 let run : all a. all acc. all dAcc. Config a acc dAcc -> (State -> a) -> use RuntimeDistBase in Dist a =
@@ -260,8 +265,7 @@ let run : all a. all acc. all dAcc. Config a acc dAcc -> (State -> a) -> use Run
         let prevAlignedTrace = deref state.alignedTrace in
         let prevUnalignedTraces = deref state.unalignedTraces in
         -- If we are sampling at temperature 0.0 we might want to draw global samples
-        let globalProb = config.globalProb continueState in
-        modTrace config globalProb;
+        let continueState = modTrace config continueState in
         modref state.weight 0.;
         modref state.priorWeight 0.;
         modref state.driftHastingRatio 0.;
@@ -275,19 +279,19 @@ let run : all a. all acc. all dAcc. Config a acc dAcc -> (State -> a) -> use Run
         -- print "alignedTrace: ["; print (strJoin ", " (map (lam tup. float2string tup.1) (deref state.alignedTrace))); printLn "]";
         -- print "prevUnalignedTraces: ["; print (strJoin ", " (map (lam ls. join ["[", strJoin "," (map (lam tup. float2string tup.1) ls), "]"]) prevUnalignedTraces)); printLn "]";
         -- print "unalignedTraces: ["; print (strJoin ", " (map (lam ls. join ["[", strJoin "," (map (lam tup. float2string tup.1) ls), "]"]) (deref state.unalignedTraces))); printLn "]";
-        let weight = deref state.weight in
+        let proposalWeight = deref state.weight in
         let priorWeight = deref state.priorWeight in
         let driftHastingRatio = deref state.driftHastingRatio in
         let weightReused = deref state.weightReused in
         let prevWeightReused = deref state.prevWeightReused in
         let logMhAcceptProb = minf 0. (addf
                     (addf
-                      (mulf beta (subf weight prevWeight))
+                      (mulf beta (subf proposalWeight prevWeight))
                       (subf weightReused prevWeightReused))
                     driftHastingRatio)
         in
         -- print "logMhAcceptProb: "; printLn (float2string (exp logMhAcceptProb));
-        -- print "weight: "; printLn (float2string (exp  weight));
+        -- print "proposalWeight: "; printLn (float2string (exp proposalWeight));
         -- print "prevWeight: "; printLn (float2string (exp prevWeight));
         -- print "weightReused: "; printLn (float2string (exp weightReused));
         -- print "prevWeightReused: "; printLn (float2string (exp prevWeightReused));
@@ -295,7 +299,7 @@ let run : all a. all acc. all dAcc. Config a acc dAcc -> (State -> a) -> use Run
         match
           if bernoulliSample (exp logMhAcceptProb) then
             mcmcAccept ();
-            (true, weight, priorWeight, sample)
+            (true, proposalWeight, priorWeight, sample)
           else
             -- NOTE(dlunde,2022-10-06): VERY IMPORTANT: Restore previous traces
             -- as we reject and reuse the old sample.
@@ -306,6 +310,8 @@ let run : all a. all acc. all dAcc. Config a acc dAcc -> (State -> a) -> use Run
         let samples = if config.keepSample iter then snoc samples sample else samples in
         let debugInfo =
           { accepted = accepted
+          , prevWeight = prevWeight
+          , proposalWeight = proposalWeight
           } in
         let debugState = config.debug.1 debugState debugInfo in
         let sampleInfo =
@@ -320,7 +326,7 @@ let run : all a. all acc. all dAcc. Config a acc dAcc -> (State -> a) -> use Run
   -- First sample -- call the model until we get a non-zero weight
   recursive let firstSample : (State -> a) -> State -> Int -> a =
     lam model. lam state. lam i.
-      let sample = model state in 
+      let sample = model state in
       let weight = deref state.weight in
       let weightReused = deref state.weightReused in
       let priorWeight = deref state.priorWeight in
@@ -330,7 +336,7 @@ let run : all a. all acc. all dAcc. Config a acc dAcc -> (State -> a) -> use Run
         -- printLn (join ["Try ", int2string i, " at sampling positive prob. sample. Sample weight: ", float2string (weight)]);
         firstSample model state (addi i 1)
       else sample
-  in 
+  in
 
   -- Used to keep track of acceptance ratio
   mcmcAcceptInit ();
@@ -344,12 +350,19 @@ let run : all a. all acc. all dAcc. Config a acc dAcc -> (State -> a) -> use Run
   modref state.alignedTraceLength (length (deref state.alignedTrace));
   modref state.useDriftKernels config.driftKernel;
 
+  (if eqi 0 (deref state.alignedTraceLength) then
+     printErrorLn "This model appears to not have any aligned `assume`s, which is a requirement for this inference method.";
+     exit 1
+   else ());
+
   let iter = 0 in
   let samples = if config.keepSample iter then [sample] else [] in
 
   -- Set up debug and continue states
   let debugInfo =
     { accepted = true
+    , prevWeight = negf inf
+    , proposalWeight = weight
     } in
 
   let debugState = config.debug.1 config.debug.0 debugInfo in

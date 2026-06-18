@@ -1,19 +1,10 @@
-CPPL := ../../../../../build/cppl
-EXAMPLES := baysian-parameter-estimation.json baysian-parameter-estimation-sensitivities.json ode-sensitivites.json rode-faster.json
+ROOT := $(shell git rev-parse --show-toplevel)
+REL  := $(shell realpath --relative-to=$(ROOT) $(CURDIR))
 
-.PHONY: all
-all: $(EXAMPLES)
-
-.PHONY: plot
-plot:
-	python plot.py
-
-%.exe: %.mc
-	$(CPPL) --seed 1 --test --dppl-typecheck --output $@ $<
-
-%.json: %.exe
-	./$<
+.PHONY: plots
+plots:
+	python plot.py "$(ROOT)/build/$(REL)"
 
 .PHONY: clean
 clean:
-	rm -rf *.json *.exe
+	rm -rf *.pdf

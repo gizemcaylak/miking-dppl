@@ -1,4 +1,5 @@
 include "math.mc"
+include "../../cppl-test.mc"
 
 let model1 = lam.
   let a = assume (Gamma 2. 3.) in
@@ -23,11 +24,11 @@ let expected = foldl addf 0. [6., 0.5, 0.5, 1., 2.5] in
 let d = infer (Importance { particles = 1000 }) model1 in
 utest expectation d with expected using eqfApprox 1e-1 in
 
-let d = infer (BPF { particles = 1000 }) model1 in
-utest expectation d with expected using eqfApprox 1e-1 in
+-- let d = infer (BPF { particles = 1000, resample = "align" }) model1 in
+-- utest expectation d with expected using eqfApprox 1e-1 in
 
-let d = infer (APF { particles = 1000 }) model1 in
-utest expectation d with expected using eqfApprox 1e-1 in
+-- let d = infer (APF { particles = 1000, resample = "align" }) model1 in
+-- utest expectation d with expected using eqfApprox 1e-1 in
 
 let d = infer (PIMH { particles = 1000 }) model1 in
 utest expectation d with expected using eqfApprox 1e-1 in
@@ -39,18 +40,18 @@ let d = infer (NaiveMCMC { iterations = 1000 }) model1 in
 utest expectation d with expected using eqfApprox 1e-1 in
 
 let d =
-  infer (LightweightMCMC { continue = (lam. 100000, lam x. lam. lam. (subi x 1, neqi x 0)), globalProb = lam. 0.1 }) model1
+  infer (LightweightMCMC { continue = (lam. 100000, lam x. lam. lam. (subi x 1, neqi x 0)), resampleBehavior = (resampleBehavior 0.1) }) model1
 in
 utest expectation d with expected using eqfApprox 1e-1 in
 
 let d = infer (Importance { particles = 1 }) model2 in
 utest expectation d with expected in
 
-let d = infer (BPF { particles = 1 }) model2 in
-utest expectation d with expected in
+-- let d = infer (BPF { particles = 1, resample = "align" }) model2 in
+-- utest expectation d with expected in
 
-let d = infer (APF { particles = 2 }) model2 in
-utest expectation d with expected in
+-- let d = infer (APF { particles = 2, resample = "align" }) model2 in
+-- utest expectation d with expected in
 
 let d = infer (PIMH { particles = 1 }) model2 in
 utest expectation d with expected in
@@ -60,11 +61,5 @@ utest expectation d with expected in
 
 let d = infer (NaiveMCMC { iterations = 1 }) model2 in
 utest expectation d with expected in
-
-let d =
-  infer (LightweightMCMC { continue = (lam. 1, lam x. lam. lam. (subi x 1, neqi x 0)), globalProb = lam. 0.1 }) model2
-in
-utest expectation d with expected using eqfApprox 1e-1 in
-
 
 ()

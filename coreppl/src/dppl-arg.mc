@@ -2,6 +2,11 @@ include "optparse-applicative.mc"
 include "set.mc"
 include "infer-method.mc"
 
+include "mexpr/invariants.mc"
+include "mexpr/invariants/in-scope.mc"
+include "mexpr/invariants/definitions.mc"
+include "mexpr/invariants/info.mc"
+
 include "inference/is-lw.mc"
 include "inference/smc-bpf.mc"
 include "inference/smc-apf.mc"
@@ -36,6 +41,7 @@ type TransformationOptions =
   , debugPhases : Bool
   , printModel : Bool
   , seed : Option Int
+  , invariantsToCheck : use Invariant in () -> [Attr Loc]
   }
 
 type SeparatedOptions =
@@ -85,7 +91,7 @@ let frontendOptions : OptParser FrontendOptions =
   optApply (optMap5 mk printMCore exitBefore outputMl output test) input
 
 let cpplFileOptions : OptParser CPPLFileOptions =
-  let mk = lam dpplTypeCheck. lam dpplTypeCheck. lam printSamples. lam printAcceptanceRate. lam defaultParticles.
+  let mk = lam dpplTypeCheck. lam printSamples. lam printAcceptanceRate. lam defaultParticles.
     { dpplTypeCheck = dpplTypeCheck
     , printSamples = printSamples
     , printAcceptanceRate = printAcceptanceRate
@@ -110,7 +116,7 @@ let cpplFileOptions : OptParser CPPLFileOptions =
       , description = concat "The number of particles (i.e., samples or iterations). Takes precedence over --particles in a program without infers. The default is " (int2string default)
       } in
     optOr opt (optPure default) in
-  optMap5 mk dpplTypeCheck dpplTypeCheck printSamples printAcceptanceRate defaultParticles
+  optMap4 mk dpplTypeCheck printSamples printAcceptanceRate defaultParticles
 
 let inferenceMethodOptions : OptParser (use InferMethodBase in InferMethod) = foldl1 optOr
   [ isLwOptions
@@ -130,6 +136,17 @@ let transformationOptions : OptParser TransformationOptions =
     , debugPhases = debugPhases
     , debugDumpPhases = debugDumpPhases
     , seed = seed
+    , invariantsToCheck = lam.
+      use UnboundErrorAttr in
+      use WithoutInfoAttr in
+      use DefinedAttr in
+      let scope =
+        {_scopeEmpty () with tyConstructors = setOfSeq nameCmp (mapValues builtinTypeNames)} in
+      [ InScopeAttr (filledThunk scope)
+      , UnboundErrorAttr (mkThunk (lazyPure "UnboundErrorAttr#root"))
+      , WithoutInfoAttr (mkThunk (lazyPure "WithoutInfoAttr#root"))
+      , DefinedAttr (mkThunk (lazyPure "DefinedAttr#root"))
+      ]
     } in
   let printModel = optFlag
     { optFlagDef with long = "print-model"

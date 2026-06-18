@@ -4,6 +4,8 @@
 
 type DebugInfo =
   { accepted : Bool
+  , prevWeight : Float
+  , proposalWeight : Float
   }
 
 type SampleInfo =
@@ -16,6 +18,6 @@ type Config a acc dAcc =
   , keepSample : Int -> Bool
   , debug : (dAcc, dAcc -> DebugInfo -> dAcc)
   , temperature : acc -> Float
-  , globalProb : acc -> Float
   , driftKernel : Bool
+  , resampleBehavior : (acc -> Int -> (acc,([Bool], Int)))
   }

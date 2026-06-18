@@ -25,11 +25,12 @@ include "inference-interface.mc"
 include "pruning/compile.mc"
 include "delayed-sampling/compile.mc"
 
-lang DPPLReplace = Ast
-  sem replaceDpplKeywords : Expr -> Expr
-  sem replaceDpplKeywords =
+lang DPPLReplace = Ast + OpaqueAst
+  sem replaceDpplKeywords : {path : String, env : SymEnv} -> Expr -> Expr
+  sem replaceDpplKeywords distEnv =
+  | t & TmOpaque _ -> t
   | t ->
-    let t = smap_Expr_Expr replaceDpplKeywords t in
+    let t = smap_Expr_Expr (replaceDpplKeywords distEnv) t in
     let t = smap_Expr_Type replaceDpplKeywordsType t in
     let t = smap_Expr_TypeLabel replaceDpplKeywordsType t in
     let t = smap_Expr_Pat replaceDpplKeywordsPat t in
@@ -46,7 +47,7 @@ lang DPPLReplace = Ast
     withTypePat (replaceDpplKeywordsType (tyPat p)) p
 end
 
-lang DPPLKeywordReplace = DPPLReplace + DPPLParser
+lang DPPLKeywordReplace = DPPLReplace + DPPLParser + SymGetters
   sem _makeError : Info -> String -> Expr
   sem _makeError info =
   | keywordStr ->
@@ -64,9 +65,9 @@ lang DPPLKeywordReplace = DPPLReplace + DPPLParser
                    info = info},
       ty = TyUnknown {info = info}, info = info}
 
-  sem replaceDpplKeywords : Expr -> Expr
-  sem replaceDpplKeywords =
-  | TmAssume t -> _makeError t.info "assume"
+  sem replaceDpplKeywords distEnv =
+  | TmAssume t ->
+    app_ (nvar_ (_getVarExn "sample" distEnv)) (replaceDpplKeywords distEnv t.dist)
   | TmObserve t -> _makeError t.info "observe"
   | TmWeight t -> _makeError t.info "weight"
   | TmResample t -> _makeError t.info "resample"
@@ -74,13 +75,12 @@ lang DPPLKeywordReplace = DPPLReplace + DPPLParser
 end
 
 lang DPPLDelayedReplace = DPPLReplace + DPPLParser
-  sem replaceDpplKeywords : Expr -> Expr
-  sem replaceDpplKeywords =
+  sem replaceDpplKeywords distEnv =
   | TmDelay t ->
-    replaceDpplKeywords (TmAssume {
+    replaceDpplKeywords distEnv (TmAssume {
       dist = t.dist, ty = t.ty, info = t.info, driftKernel = None ()
     })
-  | TmDelayed t -> replaceDpplKeywords t.delay
+  | TmDelayed t -> replaceDpplKeywords distEnv t.delay
 
    sem replaceDpplKeywordsType : Type -> Type
    sem replaceDpplKeywordsType =
@@ -89,7 +89,7 @@ lang DPPLDelayedReplace = DPPLReplace + DPPLParser
   | TyDelaySeqF t -> TySeq {info = t.info, ty = TyFloat {info = t.info}}
 end
 
-lang DPPLPrunedReplace = DPPLReplace + SymGetters + DPPLParser
+lang DPPLPrunedReplace = DPPLReplace + SymGetters + DPPLParser + OpaqueAst
   sem replaceCancel env =
   | (TmCancel t) ->
     let i = withInfo t.info in
@@ -97,12 +97,12 @@ lang DPPLPrunedReplace = DPPLReplace + SymGetters + DPPLParser
  t.dist t.value),
                info = t.info,
                ty = t.ty}
+  | t & TmOpaque _ -> t
   | t -> smap_Expr_Expr (replaceCancel env) t
 
-  sem replaceDpplKeywords : Expr -> Expr
-  sem replaceDpplKeywords =
-  | TmPrune t -> replaceDpplKeywords (assume_ t.dist)
-  | TmPruned t -> replaceDpplKeywords t.prune
+  sem replaceDpplKeywords distEnv =
+  | TmPrune t -> replaceDpplKeywords distEnv (assume_ t.dist)
+  | TmPruned t -> replaceDpplKeywords distEnv t.prune
 
   sem replaceDpplKeywordsType : Type -> Type
   sem replaceDpplKeywordsType =
@@ -117,6 +117,7 @@ lang ElementaryFunctionsTransform = ElementaryFunctions
   sem elementaryFunctionsTransformExpr : (String -> Name) -> Expr -> Expr
   sem elementaryFunctionsTransformExpr stringToName =
   | tm & TmConst r -> elementaryFunctionsTransformConst stringToName tm r.val
+  | tm & TmOpaque _ -> tm
   | tm -> smap_Expr_Expr (elementaryFunctionsTransformExpr stringToName) tm
 
   sem elementaryFunctionsTransformConst : (String -> Name) -> Expr -> Const -> Expr
@@ -127,6 +128,8 @@ lang ElementaryFunctionsTransform = ElementaryFunctions
   | CExp _ -> withInfo (infoTm tm) (nvar_ (stringToName "exp"))
   | CLog _ -> withInfo (infoTm tm) (nvar_ (stringToName "log"))
   | CPow _ -> withInfo (infoTm tm) (nvar_ (stringToName "pow"))
+  | CAbsf _ -> withInfo (infoTm tm) (nvar_ (stringToName "absf"))
+  | CSmoothdivf _ -> withInfo (infoTm tm) (nvar_ (stringToName "smoothdivf"))
   | _ -> tm
 
   sem _elementaryFunctionsTransformRuntimeIds =| _ -> [
@@ -155,9 +158,10 @@ lang ReplaceHigherOrderConstants
   sem replaceHigherOrderConstants : {path : String, env : SymEnv} -> Expr -> Expr
 end
 
-lang ReplaceHigherOrderConstantsLoadedPreviously = ReplaceHigherOrderConstants + SymGetters
+lang ReplaceHigherOrderConstantsLoadedPreviously = ReplaceHigherOrderConstants + SymGetters + OpaqueAst
   sem replaceHigherOrderConstants env =
   | tm -> smap_Expr_Expr (replaceHigherOrderConstants env) tm
+  | tm & TmOpaque _ -> tm
   | tm & TmConst x ->
     match _replaceHigherOrderConstant x.val with Some name then
       withType x.ty (withInfo x.info (nvar_ (_getVarExn name env)))
@@ -171,7 +175,7 @@ end
 lang DPPLResymbolizeModel =
   Resymbolize + ResymbolizeVar + ResymbolizeLam + ResymbolizeMatch +
   ResymbolizeDecl + ResymbolizeLetDecl + ResymbolizeRecLetsDecl +
-  ResymbolizeNamedPat + ResymbolizeSeqEdgePat
+  ResymbolizeNamedPat + ResymbolizeSeqEdgePat + ResymbolizeOpaque
 
   sem resymbolizeExpr : Map Name Name -> Expr -> Expr
   sem resymbolizeExpr nameMap =
@@ -210,7 +214,7 @@ lang CompileModels = ReplaceHigherOrderConstants + PhaseStats + MExprANFAll + DP
         match model with {extractAst = extractAst, method = method, params = params} in
         match mapLookup method runtimes with Some entry then
           let extractAst = lam f. transformModelAst envs options method (extractAst f) in
-          let log = mkPhaseLogState options.debugDumpPhases options.debugPhases in
+          let log = mkPhaseLogState options.debugDumpPhases options.debugPhases options.invariantsToCheck in
           let ast = compileModel options lamliftSols envs entry id {model with extractAst = extractAst} in
           endPhaseStatsExpr log "compile-model-one" (bind_ ast unit_);
           let ast = smap_Decl_Expr removeModelDefinitions ast in
@@ -233,10 +237,10 @@ lang CompileModels = ReplaceHigherOrderConstants + PhaseStats + MExprANFAll + DP
     let ast = if retainPruning method
       then ast
       else
-        use DPPLPrunedReplace in replaceDpplKeywords (replaceCancel envs.distEnv ast) in
+        use DPPLPrunedReplace in replaceDpplKeywords envs.distEnv (replaceCancel envs.distEnv ast) in
     let ast = if retainDynamicDelayedSampling method
       then ast
-      else use DPPLDelayedReplace in replaceDpplKeywords ast in
+      else use DPPLDelayedReplace in replaceDpplKeywords envs.distEnv ast in
     -- Optionally print the model AST
     (if options.printModel then
       printLn (mexprPPLToString ast)
@@ -254,21 +258,20 @@ lang CompileModels = ReplaceHigherOrderConstants + PhaseStats + MExprANFAll + DP
     -> Decl
   sem compileModel options lamliftSols envs entry modelId =
   | {extractAst = extractAst, params = modelParams, method = method} ->
-    let log = mkPhaseLogState options.debugDumpPhases options.debugPhases in
-
-    -- ANF
-    let extractAst = lam f. normalizeTerm (extractAst f) in
-
-    -- ANF with higher-order intrinsics replaced with alternatives in
-    -- seq-native.mc
-    -- TODO(dlunde,2022-10-24): @Lars I'm not sure how I should combine this
-    -- with your updates.
+    let log = mkPhaseLogState options.debugDumpPhases options.debugPhases options.invariantsToCheck in
 
     -- Apply inference-specific transformation
     let stateVarId = nameNoSym "state" in
     let interface =
       { extractNormal = lam f. extractAst f
       , extractNoHigherOrderConsts = lam f. extractAst (lam ast. replaceHigherOrderConstants envs.higherOrderSymEnv (f ast))
+      , normalizeTerm = normalizeTerm
+      , stripOpaque =
+        recursive let work = lam tm.
+          match tm with TmOpaque x
+          then work x.body
+          else smap_Expr_Expr work tm
+        in work
       , options = options
       , runtime = {env = entry.env, lamliftSols = lamliftSols}
       , dists = {env = envs.distEnv, lamliftSols = lamliftSols}
@@ -309,6 +312,7 @@ lang CompileModels = ReplaceHigherOrderConstants + PhaseStats + MExprANFAll + DP
   | TmDecl (x & {decl = DeclType _}) -> removeModelDefinitions x.inexpr
   | TmDecl (x & {decl = DeclConDef _}) -> removeModelDefinitions x.inexpr
   | TmDecl (x & {decl = DeclExt _}) -> removeModelDefinitions x.inexpr
+  | t & TmOpaque _ -> t
   | t -> smap_Expr_Expr removeModelDefinitions t
 end
 
@@ -469,7 +473,7 @@ lang CPPLLoader
     let options = hook.options in
     let runtimes = deref hook.runtimes in
     let envs = hook.envs in
-    let log = mkPhaseLogState options.debugDumpPhases options.debugPhases in
+    let log = mkPhaseLogState options.debugDumpPhases options.debugPhases options.invariantsToCheck in
     let ast = removeMetaVarExpr ast in
     endPhaseStatsExpr log "remove-meta-var" ast;
     let runtimeRunNames = mapMap (lam entry. _getVarExn "run" entry.env) runtimes in
@@ -480,7 +484,7 @@ lang CPPLLoader
     let models = compileModels options lamliftSols envs runtimes models in
     let ast = mapPre_Expr_Expr (transformTmDist {env = envs.distEnv, lamliftSols = lamliftSols}) ast in
     endPhaseStatsExpr log "replace-tm-dist" ast;
-    let ast = replaceDpplKeywords ast in
+    let ast = replaceDpplKeywords envs.distEnv ast in
     endPhaseStatsExpr log "replace-dppl-keywords" ast;
     let ast = insertModels models ast in
     endPhaseStatsExpr log "insert-models" ast;
@@ -517,16 +521,18 @@ lang ODELoader = SolveODE + MCoreLoader + MExprSubstitute
   sem odeSolverName =
   | RK4 _ -> "odeSolverRK4Solve"
   | EF _ -> "odeSolverEFSolve"
+  | RK4EC _ -> "odeSolverRK4HalfStepErrControlSolve"
+  | EFEC _ -> "odeSolverEFHalfStepErrControlSolve"
   | EFA _ -> "odeSolverEFASolve"
   | method -> error (join [
     nameGetStr (odeSolverMethodName method),
-    " does not have an implementation in the ODE solver runtime"
-  ])
+    " does not have an implementation in the ODE solver runtime" ])
 
   -- Maps ODE solver method to its method arguments.
   sem odeSolverArgs : ODESolverMethod -> [Expr]
   sem odeSolverArgs =
   | ODESolverDefault r | RK4 r | EF r -> [r.add, r.smul, r.stepSize]
+  | RK4EC r | EFEC r -> [r.add, r.smul, r.stepSize, r.ok]
   | EFA r -> [r.add, r.smul, r.stepSize, r.n]
 
   -- Replaces default ODE solver methods with a concrete method.
@@ -626,13 +632,13 @@ lang ADLoader = MCoreLoader + CorePPL + Delayed + Diff +
                 (lam _p.
                   -- Asserts parameters only if needed
                   _mapFloatExprsExpr i (adAssertFloat env i) (lam x. x) _p.1
-                    (_var_ i _p.1 _p.0))
+                    (_ivar_ i _p.1 _p.0))
                 _ps in
             let body =
-              foldr (lam p. lam fn. _app_ i fn p) (_var_ i r.tyIdent r.ident)
+              foldr (lam p. lam fn. _iapp_ i fn p) (_ivar_ i r.tyIdent r.ident)
                 ps in
             let body =
-              foldl (lam body. lam _p. _lam_ i _p.0 _p.1 body) body _ps in
+              foldl (lam body. lam _p. _ilam_ i _p.0 _p.1 body) body _ps in
             decl_let body in
           _queueAddDecl loader decl1
         else loader
@@ -666,26 +672,26 @@ lang ADLoader = MCoreLoader + CorePPL + Delayed + Diff +
   | TmDiff r ->
     match _tyTm r.fn with TyArrow tyr then
       let i = r.info in
-      let _var_ = _var_ i in
-      let _lam_ = _lam_ i in
-      let _app_ = _app_ i in
-      let _let_ = _let_ i in
+      let _ivar_ = _ivar_ i in
+      let _ilam_ = _ilam_ i in
+      let _iapp_ = _iapp_ i in
+      let _ilet_ = _ilet_ i in
       let ityfloat_ = ityfloat_ i in
       let _eps = nameSym "eps" in
-      let eps = _var_ ityfloat_ _eps in
+      let eps = _ivar_ ityfloat_ _eps in
       let _pri = nameSym "pri" in
-      let pri = _var_ tyr.from _pri in
+      let pri = _ivar_ tyr.from _pri in
       let _tgn = nameSym "tgn" in
-      let tgn = _var_ tyr.from _tgn in
+      let tgn = _ivar_ tyr.from _tgn in
       let _res = nameSym "res" in
-      let res = _var_ tyr.to _res in
-      _let_ _eps
-        (_app_ (adGetVarExn env i (ityarrow_ i tyunit_ ityfloat_) "geneps")
-           (_unit_ i))
-        (_let_ _pri (adLiftExpr env r.arg)
-           (_let_ _tgn (adLiftExpr env r.darg)
-              (_let_ _res
-                 (_app_
+      let res = _ivar_ tyr.to _res in
+      _ilet_ _eps
+        (_iapp_ (adGetVarExn env i (ityarrow_ i tyunit_ ityfloat_) "geneps")
+           (_iunit_ i))
+        (_ilet_ _pri (adLiftExpr env r.arg)
+           (_ilet_ _tgn (adLiftExpr env r.darg)
+              (_ilet_ _res
+                 (_iapp_
                     (adLiftExpr env r.fn)
                     (adTypeDirectedDual env i eps pri tgn tyr.from))
                  (adTypeDirectedTangent env i eps res tyr.to))))
@@ -708,9 +714,9 @@ lang ADLoader = MCoreLoader + CorePPL + Delayed + Diff +
         if _hasFloatExprsMap ty then
           let i = infoTm e in
           let _x = nameSym "x" in
-          _let_ i _x e
+          _ilet_ i _x e
             (_mapFloatExprsExpr i (adAssertFloat env i) (lam x. x) ty
-               (_var_ i ty _x))
+               (_ivar_ i ty _x))
         else e
       in
       smap_Expr_Expr (compose f (adLiftExpr env)) e
@@ -736,6 +742,8 @@ lang ADLoader = MCoreLoader + CorePPL + Delayed + Diff +
   | CLog _ -> adliftConstH env e "log"
   | CSqrt _ -> adliftConstH env e "sqrt"
   | CPow _ -> adliftConstH env e "pow"
+  | CAbsf _ -> adliftConstH env e "absf"
+  | CSmoothdivf _ -> adliftConstH env e "smoothdivf"
   | CFloat2string _ -> adliftConstH env e "float2string"
   | const ->
     if env.config.insertFloatAssertions then
@@ -755,7 +763,7 @@ lang ADLoader = MCoreLoader + CorePPL + Delayed + Diff +
       adGetVarExn env i
         (foldr1 (ityarrow_ i) [ityfloat_, ityfloat_, ityfloat_, ityfloat_])
         "dual" in
-    _appf3_ i dual eps pri tgn
+    _iappf3_ i dual eps pri tgn
 
   sem adTangent : ADHookEnv -> Info -> Expr -> Expr -> Expr
   sem adTangent env i eps =| e ->
@@ -764,7 +772,7 @@ lang ADLoader = MCoreLoader + CorePPL + Delayed + Diff +
       adGetVarExn env i
         (foldr1 (ityarrow_ i) [ityfloat_, ityfloat_, ityfloat_])
         "tangent" in
-    _appf2_ i tangent eps e
+    _iappf2_ i tangent eps e
 
   sem adTypeDirectedDual
     : ADHookEnv -> Info -> Expr -> Expr -> Expr -> Type -> Expr
@@ -814,7 +822,7 @@ lang ADLoader = MCoreLoader + CorePPL + Delayed + Diff +
     let assertfloat =
       adGetVarExn env i (ityarrow_ i (ityfloat_ i) (ityfloat_ i))
         "assertFloat" in
-    _app_ i assertfloat e
+    _iapp_ i assertfloat e
 
   sem _tyAssertErrMsg =| fn -> concat "Failed a type assertion in " fn
 
@@ -830,64 +838,64 @@ lang ADLoader = MCoreLoader + CorePPL + Delayed + Diff +
   sem _tmBuildErrMsg =| caller ->
     concat "failed to build type preserving term, expected in " caller
 
-  sem _var_ i ty =| n -> withInfo i (withType ty (nvar_ n))
+  sem _ivar_ i ty =| n -> withInfo i (withType ty (nvar_ n))
 
-  sem _lam_ i n ty =| e ->
+  sem _ilam_ i n ty =| e ->
     let ty = ityarrow_ i ty (tyTm e) in
     tmLam i ty n (TyUnknown { info = i }) e
 
-  sem _app_ i f =| e ->
+  sem _iapp_ i f =| e ->
     let ty =
       match _tyTm f with TyArrow r then r.to
-      else printErrorLn (type2str (_tyTm f)); error (_tmBuildErrMsg "_app_") in
+      else printErrorLn (type2str (_tyTm f)); error (_tmBuildErrMsg "_iapp_") in
     withInfo i (withType ty (app_ f e))
 
-  sem _appf2_ i f e1 =| e2 -> _app_ i (_app_ i f e1) e2
+  sem _iappf2_ i f e1 =| e2 -> _iapp_ i (_iapp_ i f e1) e2
 
-  sem _appf3_ i f e1 e2 =| e3 -> _app_ i (_appf2_ i f e1 e2) e3
+  sem _iappf3_ i f e1 e2 =| e3 -> _iapp_ i (_iappf2_ i f e1 e2) e3
 
-  sem _let_ i n e1 =| e2 ->
+  sem _ilet_ i n e1 =| e2 ->
     withInfo i (withType (_tyTm e2) (bind_ (nulet_ n e1) e2))
 
-  sem _unit_ =| i -> withInfo i (withType tyunit_ unit_)
+  sem _iunit_ =| i -> withInfo i (withType tyunit_ unit_)
 
-  sem _recordproj_ i e =| key ->
+  sem _irecordproj_ i e =| key ->
     let fields =
       match _tyTm e with TyRecord r then r.fields else
-        error (_tmBuildErrMsg "_recordproj_") in
+        error (_tmBuildErrMsg "_irecordproj_") in
     let ty = mapFindExn (stringToSid key) fields in
     withInfo i (withType ty (recordproj_ key e))
 
-  sem _get_ i e =| j ->
+  sem _iget_ i e =| j ->
     let ty = match _tyTm e with TySeq r then r.ty
-             else error (_tmBuildErrMsg "_get_") in
-    (match _tyTm j with ! TyInt _ then error (_tmBuildErrMsg "_get_") else ());
+             else error (_tmBuildErrMsg "_iget_") in
+    (match _tyTm j with ! TyInt _ then error (_tmBuildErrMsg "_iget_") else ());
     let c =
       let ty = ityarrow_ i (_tyTm e) (ityarrow_ i (ityint_ i) ty) in
       withInfo i (const_ ty (CGet ())) in
-    _appf2_ i c e j
+    _iappf2_ i c e j
 
-  sem _map_ i f =| e ->
+  sem _imap_ i f =| e ->
     let ty = match _tyTm f with TyArrow r then r.to
-             else error (_tmBuildErrMsg "_map_") in
+             else error (_tmBuildErrMsg "_imap_") in
     let c =
       let ty = ityarrow_ i (_tyTm f) (ityarrow_ i (_tyTm e) (ityseq_ i ty)) in
       withInfo i (const_ ty (CMap ())) in
-    _appf2_ i c f e
+    _iappf2_ i c f e
 
-  sem _mapi_ i f =| e ->
+  sem _imapi_ i f =| e ->
     let ty = match _tyTm f with TyArrow { to = TyArrow r } then r.to
-             else error (_tmBuildErrMsg "_mapi_") in
+             else error (_tmBuildErrMsg "_imapi_") in
     let c =
       let ty = ityarrow_ i (_tyTm f) (ityarrow_ i (_tyTm e) (ityseq_ i ty)) in
       withInfo i (const_ ty (CMapi ())) in
-    _appf2_ i c f e
+    _iappf2_ i c f e
 
   sem _mapSeqExpr i f =| e ->
     let ty = match _tyTm e with TySeq r then r.ty
              else error (_tmBuildErrMsg "_mapSeqExpr") in
     let _x = nameSym "x" in
-    _map_ i (_lam_ i _x ty (f (_var_ i ty _x))) e
+    _imap_ i (_ilam_ i _x ty (f (_ivar_ i ty _x))) e
 
   sem _map2SeqExpr i f e1 =| e2 ->
     let ty =
@@ -895,24 +903,24 @@ lang ADLoader = MCoreLoader + CorePPL + Delayed + Diff +
         error (_tmBuildErrMsg "_map2SeqExpr") in
     let _x = nameSym "x" in
     let _i = nameSym "i" in
-    let _lam_ = _lam_ i in
-    let _var_ = _var_ i in
+    let _ilam_ = _ilam_ i in
+    let _ivar_ = _ivar_ i in
     let ityint_ = ityint_ i in
-    _mapi_ i
-      (_lam_ _i ityint_
-         (_lam_ _x ty
-            (f (_var_ ty _x) (_get_ i e2 (_var_ ityint_ _i)))))
+    _imapi_ i
+      (_ilam_ _i ityint_
+         (_ilam_ _x ty
+            (f (_ivar_ ty _x) (_iget_ i e2 (_ivar_ ityint_ _i)))))
       e1
 
   sem _mapRecordExpr i fs =| e ->
     let ty = tyRecord i (map (lam t. (t.0, t.1)) fs) in
     tmRecord i ty
-      (map (lam t. (t.0, t.2 (_recordproj_ i (withType ty e) t.0))) fs)
+      (map (lam t. (t.0, t.2 (_irecordproj_ i (withType ty e) t.0))) fs)
 
   sem _map2RecordExpr i fs e1 =| e2 ->
     tmRecord i (tyRecord i (map (lam t. (t.0, t.1)) fs))
       (map
-         (lam t. (t.0, t.2 (_recordproj_ i e1 t.0) (_recordproj_ i e2 t.0)))
+         (lam t. (t.0, t.2 (_irecordproj_ i e1 t.0) (_irecordproj_ i e2 t.0)))
          fs)
 
   sem _mapRecordExprOverField i f fields =| e ->
@@ -941,7 +949,7 @@ lang ADLoader = MCoreLoader + CorePPL + Delayed + Diff +
         lam e.
           let _x = nameSym "x" in
           let ty = _tyTm e in
-          _lam_ i _x ty (to (_app_ i e (from (_var_ i ty _x)))))
+          _ilam_ i _x ty (to (_iapp_ i e (from (_ivar_ i ty _x)))))
     in
     switch (_mapFloatExprs i to from r.from, _mapFloatExprs i from to r.to)
     case (Some from, Some to) then f from to
@@ -966,6 +974,8 @@ lang CorePPLFileTypeLoader = CPPLLoader + GeneratePprintLoader + MExprGeneratePp
 
   syn Hook =
   | CorePPLFileHook {options : CPPLFileOptions, method : InferMethod}
+
+  sem _fileType = | _ ++ ".cppl" -> FCorePPL {isModel = false}
 
   sem _insertBackcompatInfer : CPPLFileOptions -> InferMethod -> Expr -> Loader -> Loader
   sem _insertBackcompatInfer options method modelBody = | loader ->
@@ -1083,7 +1093,7 @@ lang CorePPLFileTypeLoader = CPPLLoader + GeneratePprintLoader + MExprGeneratePp
     -- NOTE(oerikss, 2025-03-14): If the user requested it, we type-check with
     -- the DPPL type-checker.
     (if options.dpplTypeCheck then
-      typeOfExn (decorateTypesExn (decorateTerms (symbolize ast))); ()
+      typeOfExn (decorateTypesExn (symbolize ast)); ()
      else ());
 
     recursive let f = lam decls. lam ast.
